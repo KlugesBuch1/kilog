@@ -9,7 +9,8 @@ impl KilogApp {
         ui.spacing_mut().item_spacing.y = 8.0;
 
         let mut changed = false;
-        changed |= setting_row(ui, "Automatically check for updates", &mut self.config.check_for_updates);
+        changed |= setting_row(ui, "Automatically check for game support updates", &mut self.config.check_for_game_updates);
+        changed |= setting_row(ui, "Automatically check for app updates", &mut self.config.check_for_app_updates);
         changed |= setting_row(ui, "Enable Unlock All", &mut self.config.unlock_all);
         changed |= setting_row(ui, "Enable Auto Spoofer", &mut self.config.auto_spoofer);
         changed |= setting_row(ui, "Force region", &mut self.config.force_region);
