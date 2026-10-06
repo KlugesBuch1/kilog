@@ -1,6 +1,7 @@
 mod theme;
 
 use eframe::egui::{self, Color32};
+use egui_lucide::Lucide;
 use theme::{ACCENT, CANVAS, MUTED, SIDEBAR, TEXT};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -12,12 +13,7 @@ pub enum Page {
 }
 
 impl Page {
-    const ALL: [Self; 4] = [
-        Self::Home,
-        Self::Games,
-        Self::Achievements,
-        Self::Settings,
-    ];
+    const ALL: [Self; 4] = [Self::Home, Self::Games, Self::Achievements, Self::Settings];
 
     fn title(self) -> &'static str {
         match self {
@@ -25,6 +21,15 @@ impl Page {
             Self::Games => "Games",
             Self::Achievements => "Achievements",
             Self::Settings => "Settings",
+        }
+    }
+
+    fn icon(self) -> Lucide {
+        match self {
+            Self::Home => Lucide::House,
+            Self::Games => Lucide::Gamepad2,
+            Self::Achievements => Lucide::Trophy,
+            Self::Settings => Lucide::Settings,
         }
     }
 }
@@ -36,6 +41,7 @@ pub struct KilogApp {
 
 impl KilogApp {
     pub fn new(cc: &eframe::CreationContext<'_>, runtime: tokio::runtime::Handle) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         Self {
             runtime,
@@ -90,7 +96,7 @@ impl KilogApp {
         ui.spacing_mut().item_spacing.y = 4.0;
 
         for page in Page::ALL {
-            if nav_item(ui, page.title(), self.page == page).clicked() {
+            if nav_item(ui, page, self.page == page).clicked() {
                 self.page = page;
             }
         }
@@ -118,7 +124,7 @@ impl KilogApp {
     }
 }
 
-fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+fn nav_item(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Response {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 36.0), egui::Sense::click());
 
@@ -145,10 +151,22 @@ fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     }
 
     let color = if selected { TEXT } else { MUTED };
+    let icon_size = 16.0;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 22.0, rect.center().y),
+        egui::vec2(icon_size, icon_size),
+    );
+    page.icon()
+        .size(icon_size)
+        .color(color)
+        .stroke_width(1.75)
+        .image()
+        .paint_at(ui, icon_rect);
+
     ui.painter().text(
-        rect.left_center() + egui::vec2(16.0, 0.0),
+        rect.left_center() + egui::vec2(40.0, 0.0),
         egui::Align2::LEFT_CENTER,
-        label,
+        page.title(),
         egui::FontId::proportional(14.5),
         color,
     );
