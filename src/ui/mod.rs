@@ -1,3 +1,4 @@
+mod home;
 mod page;
 mod settings;
 mod sidebar;
@@ -5,6 +6,7 @@ mod theme;
 
 use crate::config::AppConfig;
 use eframe::egui;
+use home::AuthState;
 use page::Page;
 use theme::{ACCENT, CANVAS};
 
@@ -12,6 +14,7 @@ pub struct KilogApp {
     runtime: tokio::runtime::Handle,
     page: Page,
     config: AppConfig,
+    auth: AuthState,
     save_error: Option<String>,
 }
 
@@ -27,6 +30,7 @@ impl KilogApp {
             runtime,
             page: Page::Home,
             config,
+            auth: AuthState::Disconnected,
             save_error: None,
         }
     }
@@ -50,7 +54,9 @@ impl KilogApp {
 
         ui.add_space(18.0);
 
-        if self.page == Page::Settings {
+        if self.page == Page::Home {
+            self.home_page(ui);
+        } else if self.page == Page::Settings {
             self.settings_form(ui);
         } else {
             ui.label(
