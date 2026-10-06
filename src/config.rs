@@ -6,21 +6,39 @@ use crate::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
-pub struct Settings {
+pub struct AppConfig {
     pub check_for_updates: bool,
+    pub unlock_all: bool,
+    pub auto_spoofer: bool,
+    pub force_region: bool,
 }
 
-impl Default for Settings {
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
             check_for_updates: true,
+            unlock_all: false,
+            auto_spoofer: false,
+            force_region: false,
         }
     }
 }
 
-impl Settings {
+impl AppConfig {
+    pub fn load() -> Result<Self, Error> {
+        let path = config_path()?;
+        if !path.exists() {
+            let config = Self::default();
+            config.save()?;
+            return Ok(config);
+        }
+
+        let text = std::fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
     pub fn save(&self) -> Result<(), Error> {
-        let path = settings_path()?;
+        let path = config_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -35,19 +53,6 @@ pub fn kilog_dir() -> Result<PathBuf, Error> {
     Ok(docs.join("Kilog"))
 }
 
-pub fn settings_path() -> Result<PathBuf, Error> {
-    Ok(kilog_dir()?.join("settings.json"))
-}
-
-pub fn load_or_create() -> Result<Settings, Error> {
-    let path = settings_path()?;
-    if !path.exists() {
-        std::fs::create_dir_all(kilog_dir()?)?;
-        let settings = Settings::default();
-        settings.save()?;
-        return Ok(settings);
-    }
-
-    let text = std::fs::read_to_string(&path)?;
-    Ok(serde_json::from_str(&text)?)
+pub fn config_path() -> Result<PathBuf, Error> {
+    Ok(kilog_dir()?.join("config.json"))
 }

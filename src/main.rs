@@ -8,9 +8,9 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let settings = kilog::config::load_or_create()?;
-    let path = kilog::config::settings_path()?;
-    tracing::info!(path = %path.display(), ?settings, "settings loaded");
+    let config = kilog::config::AppConfig::load()?;
+    let path = kilog::config::config_path()?;
+    tracing::info!(path = %path.display(), ?config, "config loaded");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "kilog",
         options,
-        Box::new(move |cc| Ok(Box::new(kilog::ui::KilogApp::new(cc, handle)))),
+        Box::new(move |cc| Ok(Box::new(kilog::ui::KilogApp::new(cc, handle, config)))),
     )?;
 
     Ok(())
