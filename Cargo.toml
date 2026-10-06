@@ -22,4 +22,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "5"
 eframe = "0.36.2"
 egui-lucide = "0.1.0"
-egui_extras = { version = "0.36.2", features = ["svg"] }
+egui_extras = { version = "0.36.2", features = ["svg", "image", "http"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -16,6 +16,9 @@ pub struct KilogApp {
     config: AppConfig,
     auth: AuthState,
     save_error: Option<String>,
+    profile_rx:
+        Option<tokio::sync::oneshot::Receiver<Result<crate::xbox::models::PersonResponse, String>>>,
+    profile_error: Option<String>,
 }
 
 impl KilogApp {
@@ -32,6 +35,43 @@ impl KilogApp {
             config,
             auth: AuthState::Disconnected,
             save_error: None,
+            profile_rx: None,
+            profile_error: None,
+        }
+    }
+
+    /// Fetch the people-hub profile on the app runtime, then show it on Home.
+    pub fn load_profile(&mut self, ctx: &egui::Context, authorization: String, xuid: String) {
+        let ctx = ctx.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.profile_error = None;
+        self.profile_rx = Some(rx);
+        self.runtime.spawn(async move {
+            let result = crate::xbox::profile::fetch_profile(&authorization, &xuid)
+                .await
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_profile(&mut self) {
+        let ready = self.profile_rx.as_mut().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                Some(Err("profile request was dropped".to_owned()))
+            }
+        });
+        if let Some(result) = ready {
+            self.profile_rx = None;
+            match result {
+                Ok(profile) => {
+                    self.profile_error = None;
+                    self.auth = AuthState::Authenticated { profile };
+                }
+                Err(err) => self.profile_error = Some(err),
+            }
         }
     }
 
@@ -77,6 +117,10 @@ impl eframe::App for KilogApp {
             b as f32 / 255.0,
             a as f32 / 255.0,
         ]
+    }
+
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_profile();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
