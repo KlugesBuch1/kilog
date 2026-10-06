@@ -22,6 +22,16 @@ impl KilogApp {
         changed |= setting_row(ui, "Enable Unlock All", &mut self.config.unlock_all);
         changed |= setting_row(ui, "Enable Auto Spoofer", &mut self.config.auto_spoofer);
         changed |= setting_row(ui, "Force region", &mut self.config.force_region);
+        changed |= setting_row(
+            ui,
+            "Start Xbox App on startup",
+            &mut self.config.autostart_xbox_app,
+        );
+        changed |= setting_row(
+            ui,
+            "Start Xbox App hidden/minimized",
+            &mut self.config.start_xbox_app_hidden,
+        );
 
         if changed {
             self.save_error = self.config.save().err().map(|err| err.to_string());

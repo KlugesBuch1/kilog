@@ -6,6 +6,8 @@ pub enum Error {
     NoDocuments,
     #[error("profile response did not include the user")]
     EmptyProfile,
+    #[error("{0}")]
+    OAuth(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

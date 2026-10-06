@@ -1,17 +1,11 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct MicrosoftOAuthResponse {
     pub access_token: String,
-    pub token_type: String,
-    pub expires_in: u64,
-    #[serde(default)]
-    pub scope: Option<String>,
     #[serde(default)]
     pub refresh_token: Option<String>,
-    #[serde(default)]
-    pub id_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -19,8 +13,6 @@ pub struct MicrosoftOAuthError {
     pub error: String,
     #[serde(default)]
     pub error_description: Option<String>,
-    #[serde(default)]
-    pub error_codes: Vec<i64>,
 }
 
 #[derive(Debug, Error)]
@@ -57,11 +49,7 @@ mod tests {
 
         let token = parse_oauth_response(body).unwrap();
         assert_eq!(token.access_token, "access");
-        assert_eq!(token.token_type, "Bearer");
-        assert_eq!(token.expires_in, 3600);
-        assert_eq!(token.scope.as_deref(), Some("openid"));
         assert_eq!(token.refresh_token.as_deref(), Some("refresh"));
-        assert_eq!(token.id_token.as_deref(), Some("id"));
     }
 
     #[test]
@@ -81,6 +69,5 @@ mod tests {
             oauth.error_description.as_deref(),
             Some("The code is expired.")
         );
-        assert_eq!(oauth.error_codes, vec![70000]);
     }
 }

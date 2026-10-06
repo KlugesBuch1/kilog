@@ -18,6 +18,23 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let handle = runtime.handle().clone();
     let _guard = runtime.enter();
+    let token = if let Some(refresh) = kilog::auth::load_refresh_token()? {
+        match runtime.block_on(kilog::auth::refresh_token_grant(&refresh)) {
+            Ok(token) => {
+                if let Some(next) = &token.refresh_token {
+                    kilog::auth::save_refresh_token(next)?;
+                }
+                tracing::info!("session refreshed");
+                Some(token)
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "silent sign-in failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -30,7 +47,11 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "kilog",
         options,
-        Box::new(move |cc| Ok(Box::new(kilog::ui::KilogApp::new(cc, handle, config)))),
+        Box::new(move |cc| {
+            Ok(Box::new(kilog::ui::KilogApp::new(
+                cc, handle, config, token,
+            )))
+        }),
     )?;
 
     Ok(())
