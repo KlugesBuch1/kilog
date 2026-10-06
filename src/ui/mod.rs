@@ -9,17 +9,27 @@ pub enum Page {
     Home,
     Games,
     Achievements,
+    Spoofing,
+    TitleSearch,
     Settings,
 }
 
 impl Page {
-    const ALL: [Self; 4] = [Self::Home, Self::Games, Self::Achievements, Self::Settings];
+    const MAIN: [Self; 5] = [
+        Self::Home,
+        Self::Games,
+        Self::Achievements,
+        Self::Spoofing,
+        Self::TitleSearch,
+    ];
 
     fn title(self) -> &'static str {
         match self {
             Self::Home => "Home",
             Self::Games => "Games",
             Self::Achievements => "Achievements",
+            Self::Spoofing => "Spoofing",
+            Self::TitleSearch => "Title search",
             Self::Settings => "Settings",
         }
     }
@@ -29,6 +39,8 @@ impl Page {
             Self::Home => Lucide::House,
             Self::Games => Lucide::Gamepad2,
             Self::Achievements => Lucide::Trophy,
+            Self::Spoofing => Lucide::ClockPlus,
+            Self::TitleSearch => Lucide::Search,
             Self::Settings => Lucide::Settings,
         }
     }
@@ -95,11 +107,19 @@ impl KilogApp {
         ui.add_space(20.0);
         ui.spacing_mut().item_spacing.y = 4.0;
 
-        for page in Page::ALL {
+        for page in Page::MAIN {
             if nav_item(ui, page, self.page == page).clicked() {
                 self.page = page;
             }
         }
+
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            star_cta(ui);
+            ui.add_space(10.0);
+            if nav_item(ui, Page::Settings, self.page == Page::Settings).clicked() {
+                self.page = Page::Settings;
+            }
+        });
     }
 
     fn content(&self, ui: &mut egui::Ui) {
@@ -122,6 +142,57 @@ impl KilogApp {
                 .color(MUTED),
         );
     }
+}
+
+const REPO_URL: &str = "https://github.com/KlugesBuch1/kilog";
+
+fn star_cta(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::click());
+
+    let fill = if response.hovered() {
+        ACCENT.gamma_multiply(1.12)
+    } else {
+        ACCENT
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+
+    let label = "Star on GitHub";
+    let font = egui::FontId::proportional(14.0);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, TEXT);
+    let icon_size = 15.0;
+    let gap = 8.0;
+    let total = icon_size + gap + galley.size().x;
+    let start_x = rect.center().x - total / 2.0;
+
+    Lucide::Star
+        .size(icon_size)
+        .color(TEXT)
+        .stroke_width(2.0)
+        .image()
+        .paint_at(
+            ui,
+            egui::Rect::from_center_size(
+                egui::pos2(start_x + icon_size / 2.0, rect.center().y),
+                egui::vec2(icon_size, icon_size),
+            ),
+        );
+
+    ui.painter().galley(
+        egui::pos2(
+            start_x + icon_size + gap,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        TEXT,
+    );
+
+    if response.clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL));
+    }
+
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
 }
 
 fn nav_item(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Response {
