@@ -12,20 +12,11 @@ name = "kilog"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "fs", "net", "io-util"] }
-reqwest = { version = "0.12", features = ["json", "gzip", "cookies"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
-axum = "0.8"
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
-futures-util = "0.3"
-p256 = { version = "0.13", features = ["ecdsa", "jwk"] }
-sha2 = "0.10"
-base64 = "0.22"
 directories = "5"
-url = "2"
