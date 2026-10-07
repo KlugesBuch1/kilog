@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, CornerRadius, Visuals};
+use eframe::egui::{self, Color32, CornerRadius, Stroke, Visuals};
 
 pub const CANVAS: Color32 = Color32::from_rgb(16, 17, 20);
 pub const SIDEBAR: Color32 = Color32::from_rgb(22, 24, 29);
@@ -22,13 +22,17 @@ fn visuals() -> Visuals {
     visuals.hyperlink_color = ACCENT;
     visuals.panel_fill = CANVAS;
     visuals.window_fill = CANVAS;
-    visuals.extreme_bg_color = Color32::from_rgb(12, 13, 16);
-    visuals.faint_bg_color = Color32::from_rgb(32, 35, 42);
+    let field = Color32::from_rgb(26, 28, 34);
+    let field_hover = Color32::from_rgb(32, 35, 42);
+    visuals.extreme_bg_color = field;
+    visuals.text_edit_bg_color = Some(field);
+    visuals.faint_bg_color = field_hover;
     visuals.window_corner_radius = CornerRadius::same(10);
     visuals.selection.bg_fill = Color32::from_rgb(92, 24, 56);
     visuals.window_stroke.color = Color32::from_rgb(46, 49, 58);
 
     let radius = CornerRadius::same(8);
+    let stroke = Stroke::new(1.0, Color32::from_rgb(46, 49, 58));
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -37,7 +41,15 @@ fn visuals() -> Visuals {
         &mut visuals.widgets.open,
     ] {
         widget.corner_radius = radius;
+        widget.bg_stroke = stroke;
+        widget.fg_stroke = Stroke::new(1.0, TEXT);
     }
+    visuals.widgets.inactive.bg_fill = field;
+    visuals.widgets.inactive.weak_bg_fill = field;
+    visuals.widgets.hovered.bg_fill = field_hover;
+    visuals.widgets.hovered.weak_bg_fill = field_hover;
+    visuals.widgets.active.bg_fill = field_hover;
+    visuals.widgets.open.bg_fill = field;
 
     visuals
 }

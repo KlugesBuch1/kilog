@@ -33,7 +33,6 @@ impl KilogApp {
                         self.logout();
                     }
                 } else if !self.restoring && login_button(ui, "Login").clicked() {
-                    crate::utils::xbox_app::launch_xbox_app(self.config.start_xbox_app_hidden);
                     let ctx = ui.ctx().clone();
                     self.start_login(ctx);
                 }

@@ -6,10 +6,8 @@ use kilog::ui::Boot;
 #[derive(Parser)]
 #[command(name = "kilog")]
 struct Args {
-    /// Skip the network and install local placeholder Xbox headers for UI testing.
     #[arg(long)]
     dev_mock: bool,
-    /// Same as --dev-mock.
     #[arg(long)]
     fast_boot: bool,
 }

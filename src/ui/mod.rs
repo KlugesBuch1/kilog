@@ -1,3 +1,4 @@
+mod games;
 mod home;
 mod page;
 mod settings;
@@ -7,6 +8,7 @@ mod theme;
 use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
 use crate::config::AppConfig;
 use crate::xbox::profile::PersonResponse;
+use crate::xbox::titles::{GameFilter, TitlesList};
 use eframe::egui;
 use home::{AuthState, AuthUpdate};
 use page::Page;
@@ -55,6 +57,12 @@ pub struct KilogApp {
     restore_task: Option<tokio::task::JoinHandle<()>>,
     restoring: bool,
     interactive_pending: bool,
+    games_search: String,
+    games_filter: GameFilter,
+    titles: Option<TitlesList>,
+    titles_error: Option<String>,
+    titles_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<TitlesList, String>)>>,
+    titles_epoch: u64,
 }
 
 impl KilogApp {
@@ -66,9 +74,14 @@ impl KilogApp {
     ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        if config.autostart_xbox_app {
-            crate::utils::xbox_app::launch_xbox_app(config.start_xbox_app_hidden);
-        }
+        // #region agent log
+        crate::debug_agent::log(
+            "K",
+            "ui/mod.rs:new",
+            "startup does not launch the xbox app",
+            serde_json::json!({ "launchedXboxApp": false }),
+        );
+        // #endregion
         let mut app = Self {
             runtime,
             page: Page::Home,
@@ -87,6 +100,12 @@ impl KilogApp {
             restore_task: None,
             restoring: false,
             interactive_pending: false,
+            games_search: String::new(),
+            games_filter: GameFilter::All,
+            titles: None,
+            titles_error: None,
+            titles_rx: None,
+            titles_epoch: 0,
         };
         match boot {
             Boot::Mock => app.apply_developer_mock(),
@@ -141,6 +160,7 @@ impl KilogApp {
         }
         self.profile_error = None;
         self.xbox = None;
+        self.clear_titles();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
         self.auth_task = Some(self.runtime.spawn(async move {
@@ -167,6 +187,9 @@ impl KilogApp {
         self.auth_rx = None;
         self.token = None;
         self.xbox = None;
+        self.clear_titles();
+        self.games_search.clear();
+        self.games_filter = GameFilter::All;
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
         }
@@ -333,6 +356,8 @@ impl KilogApp {
 
         if self.page == Page::Home {
             self.home_page(ui);
+        } else if self.page == Page::Games {
+            self.games_page(ui);
         } else if self.page == Page::Settings {
             self.settings_form(ui);
         } else {
@@ -364,6 +389,8 @@ impl eframe::App for KilogApp {
             self.begin_profile_load(ctx.clone());
         }
         self.poll_profile();
+        self.poll_titles();
+        self.ensure_titles(ctx.clone());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

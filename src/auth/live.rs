@@ -19,7 +19,6 @@ pub struct XboxAuthorization {
 }
 
 impl XboxAuthorization {
-    /// Placeholder headers for local UI work. They are not Xbox Live credentials.
     pub fn developer_mock() -> Self {
         Self {
             authorization: "XBL3.0 x=dev;mock".into(),

@@ -12,8 +12,6 @@ pub struct AppConfig {
     pub unlock_all: bool,
     pub auto_spoofer: bool,
     pub force_region: bool,
-    pub autostart_xbox_app: bool,
-    pub start_xbox_app_hidden: bool,
 }
 
 impl Default for AppConfig {
@@ -24,8 +22,6 @@ impl Default for AppConfig {
             unlock_all: false,
             auto_spoofer: false,
             force_region: false,
-            autostart_xbox_app: false,
-            start_xbox_app_hidden: false,
         }
     }
 }
