@@ -28,11 +28,7 @@ impl KilogApp {
                     "canvas": "Color32([16, 17, 20, 255])",
                 }),
             );
-            ui.add(
-                egui::TextEdit::singleline(&mut self.games_search)
-                    .hint_text("Search for a game")
-                    .desired_width(240.0),
-            );
+            super::theme::search_field(ui, &mut self.games_search, "Search for a game", 320.0);
             egui::ComboBox::from_id_salt("game_filter")
                 .selected_text(self.games_filter.label())
                 .width(180.0)

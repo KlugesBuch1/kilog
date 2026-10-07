@@ -1,10 +1,51 @@
 use eframe::egui::{self, Color32, CornerRadius, Stroke, Visuals};
+use egui_lucide::Lucide;
 
 pub const CANVAS: Color32 = Color32::from_rgb(16, 17, 20);
 pub const SIDEBAR: Color32 = Color32::from_rgb(22, 24, 29);
 pub const TEXT: Color32 = Color32::from_rgb(236, 237, 240);
 pub const MUTED: Color32 = Color32::from_rgb(148, 154, 166);
 pub const ACCENT: Color32 = Color32::from_rgb(194, 43, 114);
+
+pub(super) fn search_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> egui::Response {
+    let height = 40.0;
+    let icon = 16.0;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(26, 28, 34))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(14, 0))
+        .show(ui, |ui| {
+            ui.set_width(width - 28.0);
+            ui.set_min_height(height);
+            ui.horizontal_centered(|ui| {
+                ui.add(
+                    Lucide::Search
+                        .size(icon)
+                        .color(MUTED)
+                        .stroke_width(1.75)
+                        .image(),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .hint_text(hint)
+                        .desired_width(width - 28.0 - icon - 12.0)
+                        .frame(egui::Frame::NONE)
+                        .font(egui::FontId::proportional(15.0))
+                        .vertical_align(egui::Align::Center)
+                        .margin(egui::Margin::symmetric(4, 0))
+                        .min_size(egui::vec2(120.0, height)),
+                )
+            })
+            .inner
+        })
+        .inner
+}
 
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);

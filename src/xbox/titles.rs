@@ -472,7 +472,7 @@ pub async fn lookup_titles(
     }
 }
 
-pub const CATALOG_PAGE_SIZE: usize = 10;
+pub const CATALOG_PAGE_SIZE: usize = 8;
 
 const CATALOG_SEARCH_URL: &str = "https://dbox.tools/api/title_ids/";
 

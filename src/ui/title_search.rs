@@ -5,8 +5,9 @@ use super::KilogApp;
 use super::theme::{ACCENT, MUTED, TEXT};
 use crate::xbox::titles::{CatalogPage, Title, TitleLookup, single_title_id};
 
-const MIN_CARD_W: f32 = 188.0;
 const GAP: f32 = 12.0;
+const BATCH: usize = 8;
+const COLS: usize = 4;
 
 enum SearchOutcome {
     Exact(Result<TitleLookup, String>),
@@ -21,6 +22,9 @@ pub(super) struct TitleSearch {
     seen: String,
     searched: String,
     results: Vec<Title>,
+    without_cover: Vec<Title>,
+    fetched: usize,
+    shown: usize,
     total: usize,
     exact: bool,
     pending: bool,
@@ -40,6 +44,9 @@ impl TitleSearch {
             seen: String::new(),
             searched: String::new(),
             results: Vec::new(),
+            without_cover: Vec::new(),
+            fetched: 0,
+            shown: BATCH,
             total: 0,
             exact: false,
             pending: false,
@@ -59,6 +66,9 @@ impl TitleSearch {
         self.seen.clear();
         self.searched.clear();
         self.results.clear();
+        self.without_cover.clear();
+        self.fetched = 0;
+        self.shown = BATCH;
         self.total = 0;
         self.exact = false;
         self.missing = false;
@@ -77,7 +87,14 @@ impl TitleSearch {
     }
 
     fn has_more(&self) -> bool {
-        !self.exact && self.results.len() < self.total
+        !self.exact && self.total > 0 && self.fetched < self.total
+    }
+
+    fn can_reveal_more(&self) -> bool {
+        if self.exact {
+            return false;
+        }
+        self.shown < self.results.len() || self.fetched < self.total
     }
 }
 
@@ -86,11 +103,8 @@ impl KilogApp {
         let mut submit = false;
         let mut more = false;
         ui.horizontal(|ui| {
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut self.title_search.query)
-                    .hint_text("Title ID or name")
-                    .desired_width(360.0),
-            );
+            let field =
+                super::theme::search_field(ui, &mut self.title_search.query, "Title ID or name", 440.0);
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if enter || search_button(ui, "Search").clicked() {
                 submit = true;
@@ -103,6 +117,9 @@ impl KilogApp {
             self.title_search.copied_id = None;
             self.title_search.searched.clear();
             self.title_search.results.clear();
+            self.title_search.without_cover.clear();
+            self.title_search.fetched = 0;
+            self.title_search.shown = BATCH;
             self.title_search.total = 0;
             self.title_search.exact = false;
             self.title_search.missing = false;
@@ -165,11 +182,16 @@ impl KilogApp {
         }
 
         let results = self.title_search.results.clone();
+        let count = if self.title_search.exact {
+            results.len()
+        } else {
+            self.title_search.shown.min(results.len())
+        };
         let mut copied = self.title_search.copied_id.clone();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                paint_result_grid(ui, &results, &mut copied);
+                paint_result_grid(ui, &results[..count], &mut copied);
                 ui.add_space(GAP);
                 if self.title_search.pending && self.title_search.loading_more {
                     ui.horizontal(|ui| {
@@ -177,19 +199,16 @@ impl KilogApp {
                         ui.label(egui::RichText::new("Loading more…").size(14.0).color(MUTED));
                     });
                     ui.ctx().request_repaint();
-                } else if self.title_search.has_more() && search_button(ui, "More").clicked() {
+                } else if self.title_search.can_reveal_more() && search_button(ui, "More").clicked()
+                {
                     more = true;
                 }
-                if self.title_search.total > results.len() {
+                if self.title_search.total > count {
                     ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} of {}",
-                            results.len(),
-                            self.title_search.total
-                        ))
-                        .size(13.0)
-                        .color(MUTED),
+                        egui::RichText::new(format!("{count} of {}", self.title_search.total))
+                            .size(13.0)
+                            .color(MUTED),
                     );
                 }
             });
@@ -202,7 +221,7 @@ impl KilogApp {
         }
     }
 
-    pub(super) fn poll_title_search(&mut self) {
+    pub(super) fn poll_title_search(&mut self, ctx: egui::Context) {
         let ready = self
             .title_search
             .rx
@@ -224,7 +243,10 @@ impl KilogApp {
         self.title_search.loading_more = false;
         match outcome {
             SearchOutcome::Exact(result) => self.apply_exact(result),
-            SearchOutcome::Page { offset, result } => self.apply_page(offset, result),
+            SearchOutcome::Page { offset, result } => {
+                self.apply_page(offset, result);
+                self.fill_shown_batch(ctx);
+            }
         }
     }
 
@@ -249,32 +271,52 @@ impl KilogApp {
         match result {
             Ok(page) => {
                 if offset == 0 {
-                    self.title_search.results = page.titles;
-                } else if page.titles.is_empty() {
-                    self.title_search.total = self.title_search.results.len();
-                    self.title_search.error = None;
-                    self.title_search.missing = self.title_search.results.is_empty();
-                    return;
-                } else {
-                    self.title_search.results.extend(page.titles);
+                    self.title_search.results.clear();
+                    self.title_search.without_cover.clear();
+                    self.title_search.fetched = 0;
                 }
-                self.title_search.total = if self.title_search.results.is_empty() {
-                    0
+                if page.titles.is_empty() {
+                    self.title_search.fetched = self.title_search.total.max(self.title_search.fetched);
+                    self.finish_catalog();
+                    return;
+                }
+                self.title_search.fetched += page.titles.len();
+                for title in page.titles {
+                    if title.cover_url().is_some() {
+                        self.title_search.results.push(title);
+                    } else {
+                        self.title_search.without_cover.push(title);
+                    }
+                }
+                self.title_search.total = page.total.max(self.title_search.fetched);
+                if self.title_search.fetched >= self.title_search.total {
+                    self.finish_catalog();
                 } else {
-                    page.total.max(self.title_search.results.len())
-                };
-                self.title_search.missing = self.title_search.results.is_empty();
-                self.title_search.error = None;
+                    self.title_search.missing = false;
+                    self.title_search.error = None;
+                }
             }
             Err(err) => {
                 if offset == 0 {
                     self.title_search.results.clear();
+                    self.title_search.without_cover.clear();
+                    self.title_search.fetched = 0;
                     self.title_search.total = 0;
                 }
                 self.title_search.missing = false;
                 self.title_search.error = Some(err);
             }
         }
+    }
+
+    fn finish_catalog(&mut self) {
+        let held = std::mem::take(&mut self.title_search.without_cover);
+        self.title_search.results.extend(held);
+        if self.title_search.total < self.title_search.fetched {
+            self.title_search.total = self.title_search.fetched;
+        }
+        self.title_search.missing = self.title_search.results.is_empty();
+        self.title_search.error = None;
     }
 
     fn submit_title_search(&mut self, ctx: egui::Context) {
@@ -285,6 +327,9 @@ impl KilogApp {
         self.title_search.copied_id = None;
         self.title_search.searched = query.clone();
         self.title_search.results.clear();
+        self.title_search.without_cover.clear();
+        self.title_search.fetched = 0;
+        self.title_search.shown = BATCH;
         self.title_search.total = 0;
         self.title_search.missing = false;
         self.title_search.error = None;
@@ -302,11 +347,28 @@ impl KilogApp {
     }
 
     fn load_more_titles(&mut self, ctx: egui::Context) {
-        if self.title_search.pending || !self.title_search.has_more() {
+        if self.title_search.pending {
+            return;
+        }
+        self.title_search.shown += BATCH;
+        self.fill_shown_batch(ctx);
+    }
+
+    fn fill_shown_batch(&mut self, ctx: egui::Context) {
+        if self.title_search.exact
+            || self.title_search.pending
+            || self.title_search.error.is_some()
+        {
+            return;
+        }
+        if self.title_search.results.len() >= self.title_search.shown {
+            return;
+        }
+        if !self.title_search.has_more() {
             return;
         }
         let query = self.title_search.searched.clone();
-        let offset = self.title_search.results.len();
+        let offset = self.title_search.fetched;
         self.spawn_catalog_page(ctx, query, offset);
     }
 
@@ -363,7 +425,7 @@ fn paint_result_grid(ui: &mut egui::Ui, results: &[Title], copied: &mut Option<S
         return;
     }
     let width = ui.available_width();
-    let cols = ((width + GAP) / (MIN_CARD_W + GAP)).floor().max(1.0) as usize;
+    let cols = COLS;
     let card_w = (width - GAP * (cols.saturating_sub(1) as f32)) / cols as f32;
     let card_h = card_w + 128.0;
     let rows = results.len().div_ceil(cols);

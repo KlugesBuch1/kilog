@@ -394,7 +394,7 @@ impl eframe::App for KilogApp {
         }
         self.poll_profile();
         self.poll_titles();
-        self.poll_title_search();
+        self.poll_title_search(ctx.clone());
         self.ensure_titles(ctx.clone());
     }
 
