@@ -36,7 +36,6 @@ pub async fn authorize_xbox_live(
         return Err(Error::Xbox("microsoft access token is empty".into()));
     }
     let client_id = app_id(client_id);
-    // #region agent log
     agent_log(
         "B",
         "auth/live.rs:authorize_xbox_live",
@@ -47,7 +46,6 @@ pub async fn authorize_xbox_live(
             "token": access_token_shape(access_token),
         }),
     );
-    // #endregion
     let http = reqwest::Client::new();
     let live = authorize_party(
         &http,
@@ -58,7 +56,6 @@ pub async fn authorize_xbox_live(
     );
     let events = authorize_party(&http, access_token, &client_id, EVENTS_RELYING_PARTY, true);
     let (live_result, events_result) = tokio::join!(live, events);
-    // #region agent log
     agent_log(
         "D",
         "auth/live.rs:authorize_xbox_live",
@@ -68,7 +65,6 @@ pub async fn authorize_xbox_live(
             "eventsOk": events_result.is_ok(),
         }),
     );
-    // #endregion
     let authorization = live_result?;
     let events_token = events_result?;
 
@@ -218,7 +214,6 @@ async fn post_signed(
         .unwrap_or("")
         .to_owned();
     let text = response.text().await?;
-    // #region agent log
     agent_log(
         "A",
         "auth/live.rs:post_signed",
@@ -235,7 +230,6 @@ async fn post_signed(
             "response": safe_error_body(&text),
         }),
     );
-    // #endregion
     if !status.is_success() {
         return Err(Error::Xbox(format!(
             "xbox live returned {status}: {}",

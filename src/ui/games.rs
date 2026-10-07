@@ -14,7 +14,6 @@ impl KilogApp {
     pub(super) fn games_page(&mut self, ui: &mut egui::Ui) {
         let mut refresh = false;
         ui.horizontal(|ui| {
-            // #region agent log
             let fill = ui.visuals().widgets.inactive.bg_fill;
             let text_edit = ui.visuals().text_edit_bg_color();
             crate::debug_agent::log_once(
@@ -29,7 +28,6 @@ impl KilogApp {
                     "canvas": "Color32([16, 17, 20, 255])",
                 }),
             );
-            // #endregion
             ui.add(
                 egui::TextEdit::singleline(&mut self.games_search)
                     .hint_text("Search for a game")
@@ -108,7 +106,7 @@ impl KilogApp {
         self.signed_in_xuid().is_some()
     }
 
-    fn signed_in_xuid(&self) -> Option<String> {
+    pub(super) fn signed_in_xuid(&self) -> Option<String> {
         if self
             .xbox
             .as_ref()
@@ -172,7 +170,6 @@ impl KilogApp {
             let result = crate::xbox::titles::fetch_title_history(&authorization, &xuid, &language)
                 .await
                 .map_err(|err| err.to_string());
-            // #region agent log
             crate::debug_agent::log(
                 "S",
                 "ui/games.rs:spawn_titles",
@@ -183,7 +180,6 @@ impl KilogApp {
                     "titles": result.as_ref().map(|list| list.titles.len()).unwrap_or(0),
                 }),
             );
-            // #endregion
             let _ = tx.send((epoch, result));
             ctx.request_repaint();
         });
@@ -207,14 +203,12 @@ impl KilogApp {
         }
         match result {
             Ok(list) => {
-                // #region agent log
                 crate::debug_agent::log(
                     "A",
                     "ui/games.rs:poll_titles",
                     "title cover census",
                     cover_census(&list),
                 );
-                // #endregion
                 self.titles_error = None;
                 self.titles = Some(list);
             }
@@ -243,7 +237,6 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
     let card_w = (width - GAP * (cols.saturating_sub(1) as f32)) / cols as f32;
     let card_h = card_w + 96.0;
     let rows = matched.len().div_ceil(cols);
-    // #region agent log
     crate::debug_agent::log_once(
         "grid-metrics",
         "G",
@@ -260,7 +253,6 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
             "rowStrideGuess": card_h + GAP,
         }),
     );
-    // #endregion
     ui.spacing_mut().item_spacing.y = GAP;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -293,21 +285,20 @@ fn title_card(ui: &mut egui::Ui, title: &Title, index: usize, card_w: f32, card_
     let cover = inner.width();
     let image = egui::Rect::from_min_size(inner.min, egui::vec2(cover, cover));
     if let Some(url) = title.cover_url() {
-        let loaded = ui.ctx().try_load_image(&url, egui::load::SizeHint::default());
+        let loaded = ui
+            .ctx()
+            .try_load_image(&url, egui::load::SizeHint::default());
         let status = match &loaded {
             Ok(egui::load::ImagePoll::Pending { .. }) => "pending".to_owned(),
             Ok(egui::load::ImagePoll::Ready { .. }) => "ready".to_owned(),
             Err(err) => format!("err:{err}"),
         };
-        // #region agent log
         note_image_load(&url, &status);
-        // #endregion
         egui::Image::from_uri(&url)
             .fit_to_exact_size(image.size())
             .corner_radius(10)
             .paint_at(ui, image);
         if index < 3 {
-            // #region agent log
             crate::debug_agent::log_once(
                 &format!("card-geom-{index}"),
                 "D",
@@ -321,7 +312,6 @@ fn title_card(ui: &mut egui::Ui, title: &Title, index: usize, card_w: f32, card_
                     "widgetOutsideCard": !rect.contains_rect(image),
                 }),
             );
-            // #endregion
         }
     } else {
         ui.painter().rect_filled(
@@ -463,7 +453,11 @@ fn cover_census(list: &TitlesList) -> serde_json::Value {
     let mut store_with_query = 0;
     let mut samples = Vec::new();
     for title in &list.titles {
-        let Some(raw) = title.display_image.as_deref().filter(|image| !image.is_empty()) else {
+        let Some(raw) = title
+            .display_image
+            .as_deref()
+            .filter(|image| !image.is_empty())
+        else {
             empty += 1;
             continue;
         };
@@ -535,7 +529,6 @@ fn note_image_load(url: &str, status: &str) {
     if status != "pending" && stats.logged < 24 {
         stats.logged += 1;
         let shown: String = url.chars().take(140).collect();
-        // #region agent log
         crate::debug_agent::log(
             "C",
             "ui/games.rs:title_card",
@@ -546,14 +539,20 @@ fn note_image_load(url: &str, status: &str) {
                 "url": shown,
             }),
         );
-        // #endregion
     }
-    let ready = stats.status.values().filter(|s| s.as_str() == "ready").count();
-    let pending = stats.status.values().filter(|s| s.as_str() == "pending").count();
+    let ready = stats
+        .status
+        .values()
+        .filter(|s| s.as_str() == "ready")
+        .count();
+    let pending = stats
+        .status
+        .values()
+        .filter(|s| s.as_str() == "pending")
+        .count();
     let failed = stats.status.len() - ready - pending;
     if !stats.summarized && (failed + ready >= 6 || stats.status.len() >= 20) {
         stats.summarized = true;
-        // #region agent log
         crate::debug_agent::log(
             "C",
             "ui/games.rs:title_card",
@@ -565,7 +564,6 @@ fn note_image_load(url: &str, status: &str) {
                 "tracked": stats.status.len(),
             }),
         );
-        // #endregion
     }
 }
 

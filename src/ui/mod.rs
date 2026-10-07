@@ -4,6 +4,7 @@ mod page;
 mod settings;
 mod sidebar;
 mod theme;
+mod title_search;
 
 use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
 use crate::config::AppConfig;
@@ -63,6 +64,7 @@ pub struct KilogApp {
     titles_error: Option<String>,
     titles_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<TitlesList, String>)>>,
     titles_epoch: u64,
+    title_search: title_search::TitleSearch,
 }
 
 impl KilogApp {
@@ -74,14 +76,12 @@ impl KilogApp {
     ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        // #region agent log
         crate::debug_agent::log(
             "K",
             "ui/mod.rs:new",
             "startup does not launch the xbox app",
             serde_json::json!({ "launchedXboxApp": false }),
         );
-        // #endregion
         let mut app = Self {
             runtime,
             page: Page::Home,
@@ -106,6 +106,7 @@ impl KilogApp {
             titles_error: None,
             titles_rx: None,
             titles_epoch: 0,
+            title_search: title_search::TitleSearch::new(),
         };
         match boot {
             Boot::Mock => app.apply_developer_mock(),
@@ -190,6 +191,7 @@ impl KilogApp {
         self.clear_titles();
         self.games_search.clear();
         self.games_filter = GameFilter::All;
+        self.title_search.clear();
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
         }
@@ -358,6 +360,8 @@ impl KilogApp {
             self.home_page(ui);
         } else if self.page == Page::Games {
             self.games_page(ui);
+        } else if self.page == Page::TitleSearch {
+            self.title_search_page(ui);
         } else if self.page == Page::Settings {
             self.settings_form(ui);
         } else {
@@ -390,6 +394,7 @@ impl eframe::App for KilogApp {
         }
         self.poll_profile();
         self.poll_titles();
+        self.poll_title_search();
         self.ensure_titles(ctx.clone());
     }
 

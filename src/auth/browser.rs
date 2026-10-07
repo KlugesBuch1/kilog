@@ -6,16 +6,16 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, Win32WindowHandle, WindowHandle, WindowsDisplayHandle,
 };
+use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetSystemMetrics, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SM_CXSCREEN,
-    SM_CYSCREEN, SW_SHOW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WNDCLASSW,
-    WS_CAPTION, WS_OVERLAPPED, WS_SYSMENU,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+    GetSystemMetrics, LoadCursorW, PostQuitMessage, RegisterClassW, ShowWindow, TranslateMessage,
+    CW_USEDEFAULT, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE,
+    WNDCLASSW, WS_CAPTION, WS_OVERLAPPED, WS_SYSMENU,
 };
-use windows::core::w;
 use wry::WebViewBuilder;
 
 use crate::auth::oauth::authorization_code_from_redirect;
@@ -40,7 +40,7 @@ pub fn capture_code(url: &str) -> Result<String, Error> {
 
 fn sign_in_window(url: &str) -> Result<String, Error> {
     unsafe {
-        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
     SIGN_IN_RESULT.with(|slot| *slot.borrow_mut() = None);
@@ -95,7 +95,6 @@ fn create_window() -> Result<HWND, Error> {
             ..Default::default()
         };
         if RegisterClassW(&class) == 0 {
-            // The class is already registered from an earlier sign-in.
         }
         let width = 566;
         let height = 700;
@@ -155,7 +154,7 @@ struct HostWindow(HWND);
 impl HasWindowHandle for HostWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let hwnd = NonZeroIsize::new(self.0.0 as isize).ok_or(HandleError::Unavailable)?;
-        let handle = Win32WindowHandle::new(hwnd);
+        let handle = Win32WindowHandle::new (hwnd);
         Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Win32(handle)) })
     }
 }

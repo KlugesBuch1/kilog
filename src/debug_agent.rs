@@ -9,7 +9,13 @@ pub fn log(hypothesis_id: &str, location: &str, message: &str, data: serde_json:
     write_log(hypothesis_id, location, message, data);
 }
 
-pub fn log_once(key: &str, hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+pub fn log_once(
+    key: &str,
+    hypothesis_id: &str,
+    location: &str,
+    message: &str,
+    data: serde_json::Value,
+) {
     static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let mut seen = SEEN.lock().unwrap_or_else(|err| err.into_inner());
     if seen.iter().any(|existing| existing == key) || seen.len() > 80 {
@@ -36,7 +42,11 @@ fn write_log(hypothesis_id: &str, location: &str, message: &str, data: serde_jso
         "data": data,
         "timestamp": timestamp,
     });
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(LOG_PATH) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(LOG_PATH)
+    {
         let _ = writeln!(file, "{line}");
     }
 }
