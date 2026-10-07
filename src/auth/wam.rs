@@ -75,7 +75,7 @@ fn request_token(hwnd: isize) -> Result<MicrosoftOAuthResponse, Error> {
         .map_err(win_err)?;
         let silent_status = silent.ResponseStatus().map_err(win_err)?;
         if let Some(token) = first_token(&silent).map_err(win_err)? {
-            return Ok(session(token));
+            return Ok(session(token, client_id));
         }
 
         if silent_status != WebTokenRequestStatus::UserInteractionRequired
@@ -86,7 +86,7 @@ fn request_token(hwnd: isize) -> Result<MicrosoftOAuthResponse, Error> {
 
         let interactive = request_for_window(&request, hwnd)?;
         if let Some(token) = first_token(&interactive).map_err(win_err)? {
-            return Ok(session(token));
+            return Ok(session(token, client_id));
         }
         if interactive.ResponseStatus().map_err(win_err)? == WebTokenRequestStatus::UserCancel {
             return Err(Error::OAuth("Windows sign-in was cancelled".into()));
@@ -178,10 +178,11 @@ fn first_token(
     }
 }
 
-fn session(token: String) -> MicrosoftOAuthResponse {
+fn session(token: String, client_id: &str) -> MicrosoftOAuthResponse {
     MicrosoftOAuthResponse {
         access_token: token,
         refresh_token: None,
+        client_id: client_id.to_owned(),
     }
 }
 

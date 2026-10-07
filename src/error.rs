@@ -6,8 +6,12 @@ pub enum Error {
     NoDocuments,
     #[error("profile response did not include the user")]
     EmptyProfile,
+    #[error("saved session was rejected")]
+    InvalidGrant,
     #[error("{0}")]
     OAuth(String),
+    #[error("{0}")]
+    Xbox(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

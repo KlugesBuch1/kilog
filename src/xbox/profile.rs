@@ -13,6 +13,22 @@ pub struct PersonResponse {
     pub reputation: Option<String>,
 }
 
+impl PersonResponse {
+    pub fn developer_preview() -> Self {
+        Self {
+            xuid: Some("dev".into()),
+            gamertag: Some("Developer".into()),
+            gamer_score: Some("0".into()),
+            display_pic_raw: None,
+            modern_gamertag: None,
+            account_tier: Some("Developer".into()),
+            bio: None,
+            location: None,
+            reputation: None,
+        }
+    }
+}
+
 pub async fn fetch_me(authorization: &str) -> Result<PersonResponse, Error> {
     let body = reqwest::Client::new()
         .get("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag,Gamerscore,GameDisplayPicRaw,AccountTier,Bio,Location,XboxOneRep")

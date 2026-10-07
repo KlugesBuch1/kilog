@@ -4,12 +4,38 @@ mod settings;
 mod sidebar;
 mod theme;
 
-use crate::auth::MicrosoftOAuthResponse;
+use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
 use crate::config::AppConfig;
+use crate::xbox::profile::PersonResponse;
 use eframe::egui;
 use home::{AuthState, AuthUpdate};
 use page::Page;
 use theme::{ACCENT, CANVAS};
+
+struct ProfileLoad {
+    xbox: XboxAuthorization,
+    profile: Result<PersonResponse, String>,
+}
+
+pub enum Boot {
+    Restore(String),
+    Interactive,
+    Mock,
+}
+
+enum RestoreUpdate {
+    Ready {
+        token: MicrosoftOAuthResponse,
+        xbox: XboxAuthorization,
+        profile: Result<PersonResponse, String>,
+    },
+    SignedIn {
+        token: MicrosoftOAuthResponse,
+        error: String,
+    },
+    NeedsInteractive,
+    Failed(String),
+}
 
 pub struct KilogApp {
     runtime: tokio::runtime::Handle,
@@ -18,14 +44,17 @@ pub struct KilogApp {
     auth: AuthState,
     token: Option<MicrosoftOAuthResponse>,
     save_error: Option<String>,
-    profile_rx: Option<
-        tokio::sync::oneshot::Receiver<Result<crate::xbox::profile::PersonResponse, String>>,
-    >,
+    profile_rx: Option<tokio::sync::oneshot::Receiver<Result<ProfileLoad, String>>>,
     profile_error: Option<String>,
     auth_rx: Option<tokio::sync::mpsc::Receiver<AuthUpdate>>,
     auth_task: Option<tokio::task::JoinHandle<()>>,
     hwnd: isize,
     profile_pending: bool,
+    xbox: Option<XboxAuthorization>,
+    restore_rx: Option<tokio::sync::oneshot::Receiver<RestoreUpdate>>,
+    restore_task: Option<tokio::task::JoinHandle<()>>,
+    restoring: bool,
+    interactive_pending: bool,
 }
 
 impl KilogApp {
@@ -33,62 +62,111 @@ impl KilogApp {
         cc: &eframe::CreationContext<'_>,
         runtime: tokio::runtime::Handle,
         config: AppConfig,
-        token: Option<crate::auth::MicrosoftOAuthResponse>,
+        boot: Boot,
     ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         if config.autostart_xbox_app {
             crate::utils::xbox_app::launch_xbox_app(config.start_xbox_app_hidden);
         }
-        let profile_pending = token.is_some();
-        Self {
+        let mut app = Self {
             runtime,
             page: Page::Home,
             config,
             auth: AuthState::Disconnected,
-            token,
+            token: None,
             save_error: None,
             profile_rx: None,
             profile_error: None,
             auth_rx: None,
             auth_task: None,
             hwnd: 0,
-            profile_pending,
+            profile_pending: false,
+            xbox: None,
+            restore_rx: None,
+            restore_task: None,
+            restoring: false,
+            interactive_pending: false,
+        };
+        match boot {
+            Boot::Mock => app.apply_developer_mock(),
+            Boot::Interactive => app.interactive_pending = true,
+            Boot::Restore(refresh) => app.spawn_restore(cc.egui_ctx.clone(), refresh),
         }
+        app
+    }
+
+    fn apply_developer_mock(&mut self) {
+        self.token = Some(MicrosoftOAuthResponse {
+            access_token: "dev-mock".into(),
+            refresh_token: None,
+            client_id: String::new(),
+        });
+        self.xbox = Some(XboxAuthorization::developer_mock());
+        self.auth = AuthState::Authenticated {
+            profile: PersonResponse::developer_preview(),
+        };
+        tracing::info!("developer mock session installed");
+    }
+
+    fn spawn_restore(&mut self, ctx: egui::Context, refresh: String) {
+        self.cancel_restore();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.restore_rx = Some(rx);
+        self.restoring = true;
+        self.restore_task = Some(self.runtime.spawn(async move {
+            let update = restore_saved_session(refresh).await;
+            let _ = tx.send(update);
+            ctx.request_repaint();
+        }));
+    }
+
+    fn cancel_restore(&mut self) {
+        if let Some(task) = self.restore_task.take() {
+            task.abort();
+        }
+        self.restore_rx = None;
+        self.restoring = false;
+    }
+
+    pub fn xbox_authorization(&self) -> Option<&XboxAuthorization> {
+        self.xbox.as_ref()
     }
 
     pub(super) fn start_login(&mut self, ctx: egui::Context) {
-        let client_id = std::env::var("KILOG_OAUTH_CLIENT_ID").unwrap_or_default();
+        self.cancel_restore();
 
         if let Some(task) = self.auth_task.take() {
             task.abort();
         }
         self.profile_error = None;
-        let hwnd = self.hwnd;
+        self.xbox = None;
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
         self.auth_task = Some(self.runtime.spawn(async move {
-            #[cfg(windows)]
-            match crate::auth::request_wam_token(hwnd).await {
+            let _ = tx.send(AuthUpdate::Waiting).await;
+            ctx.request_repaint();
+            match crate::auth::interactive_sign_in().await {
                 Ok(token) => {
                     let _ = tx.send(AuthUpdate::Token(token)).await;
-                    ctx.request_repaint();
-                    return;
                 }
                 Err(err) => {
-                    tracing::error!(error = %err, "windows sign-in unavailable, trying device code");
+                    let _ = tx.send(AuthUpdate::Failed(err.to_string())).await;
                 }
             }
-            run_device_login(tx, ctx, client_id).await;
+            ctx.request_repaint();
         }));
     }
 
     pub(super) fn logout(&mut self) {
+        self.cancel_restore();
+        self.interactive_pending = false;
         if let Some(task) = self.auth_task.take() {
             task.abort();
         }
         self.auth_rx = None;
         self.token = None;
+        self.xbox = None;
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
         }
@@ -97,19 +175,56 @@ impl KilogApp {
         self.profile_error = None;
     }
 
+    fn poll_restore(&mut self) {
+        let ready = self.restore_rx.as_mut().and_then(|rx| match rx.try_recv() {
+            Ok(update) => Some(update),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                Some(RestoreUpdate::Failed("session restore was dropped".into()))
+            }
+        });
+        let Some(update) = ready else {
+            return;
+        };
+        self.restore_rx = None;
+        self.restore_task = None;
+        self.restoring = false;
+        match update {
+            RestoreUpdate::Ready {
+                token,
+                xbox,
+                profile,
+            } => {
+                tracing::info!("xbox live authorization ready");
+                self.token = Some(token);
+                self.xbox = Some(xbox);
+                match profile {
+                    Ok(profile) => {
+                        self.profile_error = None;
+                        self.auth = AuthState::Authenticated { profile };
+                    }
+                    Err(err) => self.profile_error = Some(err),
+                }
+            }
+            RestoreUpdate::SignedIn { token, error } => {
+                self.token = Some(token);
+                self.profile_error = Some(error);
+            }
+            RestoreUpdate::NeedsInteractive => self.interactive_pending = true,
+            RestoreUpdate::Failed(err) => self.profile_error = Some(err),
+        }
+    }
+
     fn poll_auth(&mut self) {
         let Some(rx) = self.auth_rx.as_mut() else {
             return;
         };
         while let Ok(update) = rx.try_recv() {
             match update {
-                AuthUpdate::DeviceCode {
-                    user_code,
-                    verification_uri,
-                } => {
+                AuthUpdate::Waiting => {
                     self.auth = AuthState::Authenticating {
-                        user_code,
-                        verification_uri,
+                        user_code: String::new(),
+                        verification_uri: String::new(),
                     };
                 }
                 AuthUpdate::Token(token) => {
@@ -132,22 +247,34 @@ impl KilogApp {
     }
 
     fn begin_profile_load(&mut self, ctx: egui::Context) {
-        let Some(access_token) = self.token.as_ref().map(|token| token.access_token.clone()) else {
+        let Some(token) = self.token.clone() else {
             return;
         };
-        if self.profile_rx.is_some() || matches!(self.auth, AuthState::Authenticated { .. }) {
+        if token.access_token == "dev-mock"
+            || self.profile_rx.is_some()
+            || matches!(self.auth, AuthState::Authenticated { .. })
+        {
             return;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.profile_error = None;
         self.profile_rx = Some(rx);
         self.runtime.spawn(async move {
-            let result = async {
-                let authorization = crate::auth::request_xbox_live_token(&access_token).await?;
-                crate::xbox::profile::fetch_me(&authorization).await
-            }
+            let result = match crate::auth::authorize_xbox_live(
+                &token.access_token,
+                &token.client_id,
+                token.refresh_token.is_some(),
+            )
             .await
-            .map_err(|err| err.to_string());
+            {
+                Ok(xbox) => {
+                    let profile = crate::xbox::profile::fetch_me(&xbox.authorization)
+                        .await
+                        .map_err(|err| err.to_string());
+                    Ok(ProfileLoad { xbox, profile })
+                }
+                Err(err) => Err(err.to_string()),
+            };
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -164,9 +291,16 @@ impl KilogApp {
         if let Some(result) = ready {
             self.profile_rx = None;
             match result {
-                Ok(profile) => {
-                    self.profile_error = None;
-                    self.auth = AuthState::Authenticated { profile };
+                Ok(load) => {
+                    tracing::info!("xbox live authorization ready");
+                    self.xbox = Some(load.xbox);
+                    match load.profile {
+                        Ok(profile) => {
+                            self.profile_error = None;
+                            self.auth = AuthState::Authenticated { profile };
+                        }
+                        Err(err) => self.profile_error = Some(err),
+                    }
                 }
                 Err(err) => self.profile_error = Some(err),
             }
@@ -223,6 +357,7 @@ impl eframe::App for KilogApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_restore();
         self.poll_auth();
         if self.profile_pending {
             self.profile_pending = false;
@@ -233,6 +368,11 @@ impl eframe::App for KilogApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.capture_hwnd(frame);
+        if self.interactive_pending {
+            self.interactive_pending = false;
+            let ctx = ui.ctx().clone();
+            self.start_login(ctx);
+        }
         egui::Panel::left("sidebar")
             .resizable(false)
             .show_separator_line(false)
@@ -256,35 +396,43 @@ impl eframe::App for KilogApp {
     }
 }
 
-async fn run_device_login(
-    tx: tokio::sync::mpsc::Sender<AuthUpdate>,
-    ctx: egui::Context,
-    client_id: String,
-) {
-    let code = match crate::auth::request_device_code(&client_id).await {
-        Ok(code) => code,
-        Err(err) => {
-            let _ = tx.send(AuthUpdate::Failed(err.to_string())).await;
-            ctx.request_repaint();
-            return;
+async fn restore_saved_session(refresh: String) -> RestoreUpdate {
+    let token = match crate::auth::refresh_token_grant(&refresh).await {
+        Ok(token) => token,
+        Err(crate::error::Error::InvalidGrant) => {
+            if let Err(err) = crate::auth::clear_refresh_token() {
+                tracing::error!(error = %err, "failed to clear rejected session");
+            }
+            return RestoreUpdate::NeedsInteractive;
         }
+        Err(err) => return RestoreUpdate::Failed(err.to_string()),
     };
-
-    let _ = tx
-        .send(AuthUpdate::DeviceCode {
-            user_code: code.user_code,
-            verification_uri: code.verification_uri,
-        })
-        .await;
-    ctx.request_repaint();
-
-    match crate::auth::poll_device_token(&client_id, &code.device_code, code.interval).await {
-        Ok(token) => {
-            let _ = tx.send(AuthUpdate::Token(token)).await;
-        }
-        Err(err) => {
-            let _ = tx.send(AuthUpdate::Failed(err.to_string())).await;
+    if let Some(next) = token.refresh_token.as_deref() {
+        if let Err(err) = crate::auth::save_refresh_token(next) {
+            tracing::error!(error = %err, "failed to store refresh token");
         }
     }
-    ctx.request_repaint();
+    let xbox = match crate::auth::authorize_xbox_live(
+        &token.access_token,
+        &token.client_id,
+        token.refresh_token.is_some(),
+    )
+    .await
+    {
+        Ok(xbox) => xbox,
+        Err(err) => {
+            return RestoreUpdate::SignedIn {
+                token,
+                error: err.to_string(),
+            };
+        }
+    };
+    let profile = crate::xbox::profile::fetch_me(&xbox.authorization)
+        .await
+        .map_err(|err| err.to_string());
+    RestoreUpdate::Ready {
+        token,
+        xbox,
+        profile,
+    }
 }

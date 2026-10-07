@@ -6,6 +6,9 @@ pub struct MicrosoftOAuthResponse {
     pub access_token: String,
     #[serde(default)]
     pub refresh_token: Option<String>,
+    /// Client that minted this access token. Xbox Live authorization sends it as the app id.
+    #[serde(default)]
+    pub client_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

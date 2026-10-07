@@ -1,4 +1,18 @@
+use clap::Parser;
 use eframe::egui;
+
+use kilog::ui::Boot;
+
+#[derive(Parser)]
+#[command(name = "kilog")]
+struct Args {
+    /// Skip the network and install local placeholder Xbox headers for UI testing.
+    #[arg(long)]
+    dev_mock: bool,
+    /// Same as --dev-mock.
+    #[arg(long)]
+    fast_boot: bool,
+}
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -8,9 +22,23 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let args = Args::parse();
     let config = kilog::config::AppConfig::load()?;
     let path = kilog::config::config_path()?;
     tracing::info!(path = %path.display(), ?config, "config loaded");
+
+    let boot = if args.dev_mock || args.fast_boot {
+        Boot::Mock
+    } else {
+        match kilog::auth::load_refresh_token() {
+            Ok(Some(refresh)) => Boot::Restore(refresh),
+            Ok(None) => Boot::Interactive,
+            Err(err) => {
+                tracing::warn!(error = %err, "saved session could not be read");
+                Boot::Interactive
+            }
+        }
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -18,23 +46,6 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let handle = runtime.handle().clone();
     let _guard = runtime.enter();
-    let token = if let Some(refresh) = kilog::auth::load_refresh_token()? {
-        match runtime.block_on(kilog::auth::refresh_token_grant(&refresh)) {
-            Ok(token) => {
-                if let Some(next) = &token.refresh_token {
-                    kilog::auth::save_refresh_token(next)?;
-                }
-                tracing::info!("session refreshed");
-                Some(token)
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "silent sign-in failed");
-                None
-            }
-        }
-    } else {
-        None
-    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -47,11 +58,7 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "kilog",
         options,
-        Box::new(move |cc| {
-            Ok(Box::new(kilog::ui::KilogApp::new(
-                cc, handle, config, token,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(kilog::ui::KilogApp::new(cc, handle, config, boot)))),
     )?;
 
     Ok(())

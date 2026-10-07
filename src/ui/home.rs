@@ -5,10 +5,7 @@ use super::theme::{ACCENT, MUTED, TEXT};
 use crate::xbox::profile::PersonResponse;
 
 pub(super) enum AuthUpdate {
-    DeviceCode {
-        user_code: String,
-        verification_uri: String,
-    },
+    Waiting,
     Token(crate::auth::MicrosoftOAuthResponse),
     Failed(String),
 }
@@ -35,7 +32,7 @@ impl KilogApp {
                     if login_button(ui, "Logout").clicked() {
                         self.logout();
                     }
-                } else if login_button(ui, "Login").clicked() {
+                } else if !self.restoring && login_button(ui, "Login").clicked() {
                     crate::utils::xbox_app::launch_xbox_app(self.config.start_xbox_app_hidden);
                     let ctx = ui.ctx().clone();
                     self.start_login(ctx);
@@ -56,7 +53,7 @@ impl KilogApp {
             } => Some((user_code.clone(), verification_uri.clone())),
             _ => None,
         };
-        let loading = self.profile_rx.is_some();
+        let loading = self.profile_rx.is_some() || self.restoring;
         let error = self.profile_error.clone();
 
         show_profile(
@@ -147,28 +144,34 @@ fn show_profile(
         }
         if let Some((user_code, verification_uri)) = auth_note {
             ui.label(
-                egui::RichText::new("Waiting to sign in")
-                    .size(16.0)
-                    .color(TEXT),
+                egui::RichText::new(if user_code.is_empty() {
+                    "Complete sign-in in the window"
+                } else {
+                    "Waiting to sign in"
+                })
+                .size(16.0)
+                .color(TEXT),
             );
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(user_code)
-                    .size(28.0)
-                    .strong()
-                    .color(ACCENT),
-            );
-            ui.add_space(6.0);
-            let link = ui.add(
-                egui::Label::new(
-                    egui::RichText::new(verification_uri)
-                        .size(14.0)
+            if !user_code.is_empty() {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(user_code)
+                        .size(28.0)
+                        .strong()
                         .color(ACCENT),
-                )
-                .sense(egui::Sense::click()),
-            );
-            if link.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(verification_uri));
+                );
+                ui.add_space(6.0);
+                let link = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(verification_uri)
+                            .size(14.0)
+                            .color(ACCENT),
+                    )
+                    .sense(egui::Sense::click()),
+                );
+                if link.clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(verification_uri));
+                }
             }
             return;
         }

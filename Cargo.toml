@@ -12,11 +12,12 @@ name = "kilog"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "5"
@@ -24,6 +25,11 @@ eframe = "0.36.2"
 egui-lucide = "0.1.0"
 egui_extras = { version = "0.36.2", features = ["svg", "image", "http"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-windows = { version = "0.62.2", features = ["Security_Authentication_Web_Core", "Security_Credentials", "Foundation", "Foundation_Collections", "Win32_System_Com", "Win32_System_WinRT"] }
+base64 = "0.22"
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+uuid = { version = "1", features = ["v4"] }
+windows = { version = "0.62.2", features = ["Security_Authentication_Web_Core", "Security_Credentials", "Foundation", "Foundation_Collections", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
 raw-window-handle = "0.6.2"
 windows-future = "0.3"
+wry = { version = "0.57.0", default-features = false, features = ["os-webview"] }
