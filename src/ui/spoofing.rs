@@ -6,7 +6,7 @@ use egui_lucide::Lucide;
 use super::KilogApp;
 use super::home::AuthState;
 use super::theme::{ACCENT, MUTED, TEXT};
-use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
+use crate::auth::XboxAuthorization;
 use crate::xbox::presence::{HeartbeatControl, HeartbeatNote, HeartbeatSession, spawn_heartbeat};
 use crate::xbox::titles::{Title, parse_title_id};
 
@@ -124,7 +124,7 @@ impl KilogApp {
         }
     }
 
-    pub(super) fn poll_heartbeat(&mut self, ctx: egui::Context) {
+    pub(super) fn poll_heartbeat(&mut self) {
         self.poll_spoof_art();
         if self.spoof.live && self.signed_in_xuid().is_none() {
             self.halt_heartbeat();
@@ -143,14 +143,10 @@ impl KilogApp {
             self.ingest_heartbeat(note, true, &mut failed);
         }
 
-        let mut foreign_refresh = false;
         let retired = std::mem::take(&mut self.spoof.retired);
         let mut still_running = Vec::new();
         for mut control in retired {
             while let Some(note) = control.try_recv() {
-                if matches!(note, HeartbeatNote::Refreshed { .. }) {
-                    foreign_refresh = true;
-                }
                 self.ingest_heartbeat(note, false, &mut failed);
             }
             if !control.is_finished() {
@@ -170,18 +166,6 @@ impl KilogApp {
         if let Some(message) = failed {
             self.halt_heartbeat();
             self.spoof.error = Some(message);
-        }
-
-        if foreign_refresh && self.spoof.live {
-            let current = self.xbox.as_ref().map(|xbox| xbox.authorization.as_str());
-            let running = self
-                .spoof
-                .run
-                .as_ref()
-                .map(|run| run.authorization.as_str());
-            if current != running {
-                self.start_heartbeat(ctx);
-            }
         }
     }
 
@@ -229,10 +213,6 @@ impl KilogApp {
             .as_ref()
             .map(|known| known.name.clone())
             .unwrap_or_else(|| format!("Title {title_id}"));
-        let refresh_token = self
-            .token
-            .as_ref()
-            .and_then(|token| token.refresh_token.clone());
         let runtime = self.runtime.clone();
         let same_auth = self
             .spoof
@@ -248,8 +228,7 @@ impl KilogApp {
             &runtime,
             HeartbeatSession {
                 xuid: xuid.clone(),
-                authorization: authorization.clone(),
-                refresh_token,
+                authorization: String::new(),
                 title_id,
             },
             move || wake_ctx.request_repaint(),
@@ -341,36 +320,12 @@ impl KilogApp {
                     self.spoof.error = None;
                 }
             }
-            HeartbeatNote::Refreshed { token, xbox } => {
-                self.apply_heartbeat_refresh(token, xbox, from_live);
-            }
             HeartbeatNote::Stopped { message } => {
                 if from_live && self.spoof.live {
                     *failed = Some(message);
                 }
             }
         }
-    }
-
-    fn apply_heartbeat_refresh(
-        &mut self,
-        token: MicrosoftOAuthResponse,
-        xbox: XboxAuthorization,
-        from_live: bool,
-    ) {
-        if self.token.is_none() {
-            return;
-        }
-        if let Some(refresh) = token.refresh_token.as_deref()
-            && let Err(err) = crate::auth::save_refresh_token(refresh)
-        {
-            tracing::error!(error = %err, "failed to store refresh token");
-        }
-        if from_live && let Some(run) = self.spoof.run.as_mut() {
-            run.authorization = xbox.authorization.clone();
-        }
-        self.xbox = Some(xbox);
-        self.token = Some(token);
     }
 
     fn spoof_block_reason(&self) -> Option<&'static str> {

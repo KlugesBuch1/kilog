@@ -402,7 +402,7 @@ impl eframe::App for KilogApp {
         self.poll_profile();
         self.poll_titles();
         self.poll_title_search(ctx.clone());
-        self.poll_heartbeat(ctx.clone());
+        self.poll_heartbeat();
         self.ensure_titles(ctx.clone());
     }
 

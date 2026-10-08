@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
-
 const HEARTBEAT_URL: &str =
     "https://presence-heartbeat.xboxlive.com/users/xuid({xuid})/devices/current/";
 const CONTRACT_VERSION: &str = "3";
@@ -9,19 +7,12 @@ const CONTRACT_VERSION: &str = "3";
 pub struct HeartbeatSession {
     pub xuid: String,
     pub authorization: String,
-    pub refresh_token: Option<String>,
     pub title_id: u64,
 }
 
 pub enum HeartbeatNote {
     Sent,
-    Refreshed {
-        token: MicrosoftOAuthResponse,
-        xbox: XboxAuthorization,
-    },
-    Stopped {
-        message: String,
-    },
+    Stopped { message: String },
 }
 
 pub struct HeartbeatControl {
@@ -89,7 +80,7 @@ pub fn spawn_heartbeat(
             if *stop_rx.borrow() {
                 break;
             }
-            match beat_once(&client, &mut session, &notes).await {
+            match beat_once(&client, &mut session).await {
                 Ok(()) => {
                     let wait = heartbeat_interval(interval_mix(tick));
                     tick = tick.wrapping_add(1);
@@ -127,63 +118,37 @@ fn emit(
     wake();
 }
 
-async fn beat_once(
-    client: &reqwest::Client,
-    session: &mut HeartbeatSession,
-    notes: &tokio::sync::mpsc::UnboundedSender<HeartbeatNote>,
-) -> Result<(), String> {
-    match post_heartbeat(client, session).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.is_auth() => recover_auth(client, session, notes).await,
-        Err(_) => match post_heartbeat(client, session).await {
-            Ok(()) => Ok(()),
-            Err(retry) if retry.is_auth() => recover_auth(client, session, notes).await,
-            Err(retry) => Err(retry.to_string()),
-        },
+async fn beat_once(client: &reqwest::Client, session: &mut HeartbeatSession) -> Result<(), String> {
+    let mut last = None;
+    for try_index in 0..2 {
+        if session.authorization.trim().is_empty() {
+            session.authorization = load_app_authorization().await?;
+        }
+        match post_heartbeat(client, session).await {
+            Ok(()) => return Ok(()),
+            Err(err) if err.is_auth() => {
+                session.authorization.clear();
+                last = Some(err.to_string());
+                if try_index == 1 {
+                    return Err(last.unwrap());
+                }
+            }
+            Err(err) => {
+                last = Some(err.to_string());
+                if try_index == 1 {
+                    return Err(last.unwrap());
+                }
+            }
+        }
     }
+    Err(last.unwrap_or_else(|| "heartbeat failed".into()))
 }
 
-async fn recover_auth(
-    client: &reqwest::Client,
-    session: &mut HeartbeatSession,
-    notes: &tokio::sync::mpsc::UnboundedSender<HeartbeatNote>,
-) -> Result<(), String> {
-    if let Err(refresh_err) = refresh_session(session, notes).await {
-        return match post_heartbeat(client, session).await {
-            Ok(()) => Ok(()),
-            Err(_) => Err(refresh_err),
-        };
-    }
-    post_heartbeat(client, session)
+async fn load_app_authorization() -> Result<String, String> {
+    tokio::task::spawn_blocking(super::app_token::read_xbox_app_authorization)
         .await
+        .map_err(|err| format!("xbox app scan failed: {err}"))?
         .map_err(|err| err.to_string())
-}
-
-async fn refresh_session(
-    session: &mut HeartbeatSession,
-    notes: &tokio::sync::mpsc::UnboundedSender<HeartbeatNote>,
-) -> Result<(), String> {
-    let refresh_token = session
-        .refresh_token
-        .clone()
-        .filter(|token| !token.trim().is_empty())
-        .ok_or_else(|| "Xbox token expired and no refresh token is saved".to_owned())?;
-    let token = crate::auth::refresh_token_grant(&refresh_token)
-        .await
-        .map_err(|err| err.to_string())?;
-    let xbox = crate::auth::authorize_xbox_live(
-        &token.access_token,
-        &token.client_id,
-        token.refresh_token.is_some(),
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    session.authorization = xbox.authorization.clone();
-    if token.refresh_token.is_some() {
-        session.refresh_token = token.refresh_token.clone();
-    }
-    let _ = notes.send(HeartbeatNote::Refreshed { token, xbox });
-    Ok(())
 }
 
 pub(crate) fn heartbeat_body(session: &HeartbeatSession) -> serde_json::Value {
@@ -205,34 +170,39 @@ async fn post_heartbeat(
     if xuid.is_empty() {
         return Err(HeartbeatError::Rejected("xuid is empty".into()));
     }
+    let body = serde_json::to_string(&heartbeat_body(session))
+        .map_err(|err| HeartbeatError::Rejected(format!("heartbeat body failed: {err}")))?;
     let response = client
         .post(heartbeat_url(xuid))
         .header("Authorization", session.authorization.as_str())
-        .header("x-xbl-contract-version", CONTRACT_VERSION)
-        .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .json(&heartbeat_body(session))
+        .header("Accept-Language", "en-US")
+        .header("x-xbl-contract-version", CONTRACT_VERSION)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(body)
         .send()
         .await
         .map_err(|err| HeartbeatError::Transport(format!("heartbeat request failed: {err}")))?;
     let status = response.status();
-    if status.as_u16() == 401 || status.as_u16() == 403 {
-        return Err(HeartbeatError::Auth(status.as_u16()));
-    }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         let snippet: String = body.chars().take(180).collect();
-        return Err(HeartbeatError::Rejected(format!(
-            "heartbeat returned {}: {snippet}",
-            status.as_u16()
-        )));
+        let message = if snippet.is_empty() {
+            format!("heartbeat returned {}", status.as_u16())
+        } else {
+            format!("heartbeat returned {}: {snippet}", status.as_u16())
+        };
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            return Err(HeartbeatError::Auth(message));
+        }
+        return Err(HeartbeatError::Rejected(message));
     }
     tracing::debug!(title_id = session.title_id, "presence heartbeat ok");
     Ok(())
 }
 
 enum HeartbeatError {
-    Auth(u16),
+    Auth(String),
     Rejected(String),
     Transport(String),
 }
@@ -246,7 +216,7 @@ impl HeartbeatError {
 impl std::fmt::Display for HeartbeatError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(status) => write!(formatter, "heartbeat unauthorized ({status})"),
+            Self::Auth(message) => formatter.write_str(message),
             Self::Rejected(message) | Self::Transport(message) => formatter.write_str(message),
         }
     }
@@ -268,7 +238,6 @@ mod tests {
         HeartbeatSession {
             xuid: "9".into(),
             authorization: "XBL3.0 x=uhs;token".into(),
-            refresh_token: None,
             title_id: 305419896,
         }
     }
