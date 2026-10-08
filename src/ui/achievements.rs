@@ -64,6 +64,7 @@ pub(super) struct AchievementPage {
     board: Option<TitleAchievements>,
     board_error: Option<String>,
     filter: AchievementFilter,
+    list_query: String,
     loading: bool,
     rx: Option<tokio::sync::oneshot::Receiver<(u64, GameLoad)>>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -81,6 +82,7 @@ impl AchievementPage {
             board: None,
             board_error: None,
             filter: AchievementFilter::All,
+            list_query: String::new(),
             loading: false,
             rx: None,
             task: None,
@@ -216,10 +218,11 @@ impl KilogApp {
         let loading = self.achievements_page.loading;
         let error = self.achievements_page.board_error.clone();
         let filter = self.achievements_page.filter;
+        let mut list_query = self.achievements_page.list_query.clone();
         let mut retry = false;
         let mut next_filter = filter;
         if let Some(board) = &self.achievements_page.board {
-            next_filter = paint_board(ui, &title, board, filter);
+            next_filter = paint_board(ui, &title, board, filter, &mut list_query);
         } else {
             game_header(ui, &title, None);
             ui.add_space(12.0);
@@ -234,6 +237,7 @@ impl KilogApp {
             }
         }
         self.achievements_page.filter = next_filter;
+        self.achievements_page.list_query = list_query;
         retry
     }
 
@@ -254,6 +258,7 @@ impl KilogApp {
         self.achievements_page.board = None;
         self.achievements_page.board_error = None;
         self.achievements_page.filter = AchievementFilter::All;
+        self.achievements_page.list_query.clear();
         if self.signed_in_xuid().is_none() {
             self.achievements_page.cancel();
             self.achievements_page.selected = None;
@@ -436,12 +441,13 @@ fn paint_board(
     title: &Title,
     board: &TitleAchievements,
     filter: AchievementFilter,
+    list_query: &mut String,
 ) -> AchievementFilter {
     game_header(ui, title, Some(board));
     ui.add_space(10.0);
-    let filter = filter_row(ui, filter);
+    let filter = filter_row(ui, filter, list_query);
     ui.add_space(8.0);
-    achievement_list(ui, board, filter);
+    achievement_list(ui, board, filter, list_query);
     filter
 }
 
@@ -535,7 +541,11 @@ fn progress_bar(ui: &mut egui::Ui, fraction: f32) {
     }
 }
 
-fn filter_row(ui: &mut egui::Ui, mut filter: AchievementFilter) -> AchievementFilter {
+fn filter_row(
+    ui: &mut egui::Ui,
+    mut filter: AchievementFilter,
+    list_query: &mut String,
+) -> AchievementFilter {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         for choice in AchievementFilter::ALL {
@@ -543,8 +553,48 @@ fn filter_row(ui: &mut egui::Ui, mut filter: AchievementFilter) -> AchievementFi
                 filter = choice;
             }
         }
+        ui.add_space(8.0);
+        list_search_field(ui, list_query);
     });
     filter
+}
+
+fn list_search_field(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
+    let height = 30.0;
+    let width = 220.0;
+    let icon = 14.0;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(26, 28, 34))
+        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_width(width - 20.0);
+            ui.set_max_width(width - 20.0);
+            ui.set_min_height(height);
+            ui.set_max_height(height);
+            ui.horizontal_centered(|ui| {
+                ui.add(
+                    Lucide::Search
+                        .size(icon)
+                        .color(MUTED)
+                        .stroke_width(1.75)
+                        .image(),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .hint_text("Search achievements")
+                        .desired_width(width - 20.0 - icon - 8.0)
+                        .frame(egui::Frame::NONE)
+                        .font(egui::FontId::proportional(13.0))
+                        .vertical_align(egui::Align::Center)
+                        .margin(egui::Margin::ZERO)
+                        .min_size(egui::vec2(80.0, height)),
+                )
+            })
+            .inner
+        })
+        .inner
 }
 
 fn filter_chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
@@ -576,18 +626,25 @@ fn filter_chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn achievement_list(ui: &mut egui::Ui, board: &TitleAchievements, filter: AchievementFilter) {
+fn achievement_list(
+    ui: &mut egui::Ui,
+    board: &TitleAchievements,
+    filter: AchievementFilter,
+    list_query: &str,
+) {
+    let needle = list_query.trim().to_lowercase();
     let matched: Vec<&Achievement> = board
         .achievements
         .iter()
-        .filter(|achievement| filter.matches(achievement))
+        .filter(|achievement| filter.matches(achievement) && matches_text(achievement, &needle))
         .collect();
     if matched.is_empty() {
-        ui.label(
-            egui::RichText::new(filter.empty_message(board.achievements.len()))
-                .size(15.0)
-                .color(MUTED),
-        );
+        let message = if needle.is_empty() {
+            filter.empty_message(board.achievements.len())
+        } else {
+            "No achievements match."
+        };
+        ui.label(egui::RichText::new(message).size(15.0).color(MUTED));
         return;
     }
 
@@ -612,6 +669,18 @@ fn achievement_list(ui: &mut egui::Ui, board: &TitleAchievements, filter: Achiev
                 });
             }
         });
+}
+
+fn matches_text(achievement: &Achievement, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    achievement.name.to_lowercase().contains(needle)
+        || achievement.description.to_lowercase().contains(needle)
+        || achievement
+            .locked_description
+            .to_lowercase()
+            .contains(needle)
 }
 
 fn column_count(width: f32) -> usize {
