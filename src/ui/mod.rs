@@ -3,6 +3,7 @@ mod home;
 mod page;
 mod settings;
 mod sidebar;
+mod spoofing;
 mod theme;
 mod title_search;
 
@@ -65,6 +66,7 @@ pub struct KilogApp {
     titles_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<TitlesList, String>)>>,
     titles_epoch: u64,
     title_search: title_search::TitleSearch,
+    spoof: spoofing::SpoofState,
 }
 
 impl KilogApp {
@@ -107,6 +109,7 @@ impl KilogApp {
             titles_rx: None,
             titles_epoch: 0,
             title_search: title_search::TitleSearch::new(),
+            spoof: spoofing::SpoofState::new(),
         };
         match boot {
             Boot::Mock => app.apply_developer_mock(),
@@ -159,6 +162,7 @@ impl KilogApp {
         if let Some(task) = self.auth_task.take() {
             task.abort();
         }
+        self.stop_spoofing();
         self.profile_error = None;
         self.xbox = None;
         self.clear_titles();
@@ -192,6 +196,7 @@ impl KilogApp {
         self.games_search.clear();
         self.games_filter = GameFilter::All;
         self.title_search.clear();
+        self.stop_spoofing();
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
         }
@@ -364,6 +369,8 @@ impl KilogApp {
             self.title_search_page(ui);
         } else if self.page == Page::Settings {
             self.settings_form(ui);
+        } else if self.page == Page::Spoofing {
+            self.spoofing_page(ui);
         } else {
             ui.label(
                 egui::RichText::new("Nothing here yet.")
@@ -395,7 +402,12 @@ impl eframe::App for KilogApp {
         self.poll_profile();
         self.poll_titles();
         self.poll_title_search(ctx.clone());
+        self.poll_heartbeat(ctx.clone());
         self.ensure_titles(ctx.clone());
+    }
+
+    fn on_exit(&mut self) {
+        self.stop_spoofing();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

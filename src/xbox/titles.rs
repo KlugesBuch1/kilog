@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::error::Error;
 
 const TITLE_HISTORY_URL: &str = "https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleHistory/decoration/Achievement?maxItems=10000";
+const USER_TITLE_URL: &str = "https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleid({title_id})/decoration/achievement,image,detail,titleHistory";
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,8 @@ pub struct Title {
     pub media_item_type: Option<String>,
     pub modern_title_id: Option<String>,
     pub is_bundle: bool,
+    #[serde(default, deserialize_with = "optional_whole_minutes")]
+    pub minutes_played: Option<u64>,
     pub achievement: Option<AchievementProgress>,
     pub title_history: Option<TitleHistory>,
     pub detail: Option<TitleDetail>,
@@ -52,6 +55,7 @@ impl Default for Title {
             media_item_type: None,
             modern_title_id: None,
             is_bundle: false,
+            minutes_played: None,
             achievement: None,
             title_history: None,
             detail: None,
@@ -102,6 +106,8 @@ impl AchievementProgress {
 #[serde(rename_all = "camelCase", default)]
 pub struct TitleHistory {
     pub last_time_played: Option<String>,
+    #[serde(default, deserialize_with = "optional_whole_minutes")]
+    pub minutes_played: Option<u64>,
     pub visible: bool,
     pub can_hide: bool,
 }
@@ -110,6 +116,7 @@ impl Default for TitleHistory {
     fn default() -> Self {
         Self {
             last_time_played: None,
+            minutes_played: None,
             visible: false,
             can_hide: false,
         }
@@ -187,6 +194,12 @@ pub fn title_history_url(xuid: &str) -> String {
     TITLE_HISTORY_URL.replace("{xuid}", xuid)
 }
 
+pub fn user_title_url(xuid: &str, title_id: u64) -> String {
+    USER_TITLE_URL
+        .replace("{xuid}", xuid)
+        .replace("{title_id}", &title_id.to_string())
+}
+
 pub fn accept_language(force_region: bool) -> String {
     if force_region {
         "en-GB".to_owned()
@@ -253,6 +266,51 @@ pub async fn fetch_title_history(
     let list = parse_titles(&body)?;
     tracing::info!(count = list.titles.len(), "title history loaded");
     Ok(list)
+}
+
+pub async fn fetch_user_title(
+    authorization: &str,
+    xuid: &str,
+    title_id: u64,
+    accept_language: &str,
+) -> Result<Option<Title>, Error> {
+    if xuid.trim().is_empty() {
+        return Err(Error::Xbox("xuid is empty".into()));
+    }
+    if authorization.trim().is_empty() {
+        return Err(Error::Xbox("authorization is empty".into()));
+    }
+
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?
+        .get(user_title_url(xuid, title_id))
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "2")
+        .header("Accept", "application/json")
+        .header("Accept-Language", accept_language)
+        .send()
+        .await?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    let body = response.text().await?;
+    if !status.is_success() {
+        let snippet: String = body.chars().take(300).collect();
+        return Err(Error::Xbox(format!("title lookup {status}: {snippet}")));
+    }
+    let mut titles = parse_titles(&body)?.titles;
+    if titles.is_empty() {
+        return Ok(None);
+    }
+    let index = titles
+        .iter()
+        .position(|title| title.title_id.as_deref().and_then(parse_title_id) == Some(title_id));
+    Ok(Some(match index {
+        Some(index) => titles.swap_remove(index),
+        None => titles.remove(0),
+    }))
 }
 
 const TITLE_DETAIL_URL: &str =
@@ -684,6 +742,55 @@ fn passing(titles: &[Title], filter: GameFilter) -> Vec<usize> {
         .collect()
 }
 
+fn optional_whole_minutes<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Visitor;
+
+    impl serde::de::Visitor<'_> for Visitor {
+        type Value = Option<u64>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("minutes played")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+            Ok(Some(value))
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+            if value < 0 {
+                Ok(None)
+            } else {
+                Ok(Some(value as u64))
+            }
+        }
+
+        fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+            if value.is_finite() && value >= 0.0 {
+                Ok(Some(value.round() as u64))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            Ok(value.trim().parse().ok())
+        }
+    }
+
+    deserializer.deserialize_any(Visitor)
+}
+
 fn optional_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -991,6 +1098,42 @@ mod tests {
             title_history_url("9"),
             "https://titlehub.xboxlive.com/users/xuid(9)/titles/titleHistory/decoration/Achievement?maxItems=10000"
         );
+    }
+
+    #[test]
+    fn user_title_url_targets_one_title() {
+        assert_eq!(
+            user_title_url("9", 1738320482),
+            "https://titlehub.xboxlive.com/users/xuid(9)/titles/titleid(1738320482)/decoration/achievement,image,detail,titleHistory"
+        );
+    }
+
+    #[test]
+    fn minutes_played_accepts_numbers_on_the_title_and_history() {
+        let list = parse_titles(
+            r#"{"titles":[{"titleId":"9","minutesPlayed":125.4,"titleHistory":{"lastTimePlayed":"2024-05-01T12:00:00Z","minutesPlayed":"90"}}]}"#,
+        )
+        .unwrap();
+        let title = &list.titles[0];
+        assert_eq!(title.minutes_played, Some(125));
+        assert_eq!(
+            title
+                .title_history
+                .as_ref()
+                .and_then(|history| history.minutes_played),
+            Some(90)
+        );
+    }
+
+    #[test]
+    fn user_title_rejects_an_empty_xuid() {
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fetch_user_title("XBL3.0 x=uhs;token", "  ", 9, "en-US"))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "xuid is empty");
     }
 
     #[test]

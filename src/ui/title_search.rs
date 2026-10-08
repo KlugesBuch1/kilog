@@ -103,8 +103,12 @@ impl KilogApp {
         let mut submit = false;
         let mut more = false;
         ui.horizontal(|ui| {
-            let field =
-                super::theme::search_field(ui, &mut self.title_search.query, "Title ID or name", 440.0);
+            let field = super::theme::search_field(
+                ui,
+                &mut self.title_search.query,
+                "Title ID or name",
+                440.0,
+            );
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if enter || search_button(ui, "Search").clicked() {
                 submit = true;
@@ -276,7 +280,8 @@ impl KilogApp {
                     self.title_search.fetched = 0;
                 }
                 if page.titles.is_empty() {
-                    self.title_search.fetched = self.title_search.total.max(self.title_search.fetched);
+                    self.title_search.fetched =
+                        self.title_search.total.max(self.title_search.fetched);
                     self.finish_catalog();
                     return;
                 }
@@ -355,9 +360,7 @@ impl KilogApp {
     }
 
     fn fill_shown_batch(&mut self, ctx: egui::Context) {
-        if self.title_search.exact
-            || self.title_search.pending
-            || self.title_search.error.is_some()
+        if self.title_search.exact || self.title_search.pending || self.title_search.error.is_some()
         {
             return;
         }
