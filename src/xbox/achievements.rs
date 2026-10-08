@@ -225,7 +225,7 @@ impl TitleAchievements {
 
     pub fn gamerscore_label(&self) -> String {
         format!(
-            "{} / {} GS",
+            "{} / {}",
             self.unlocked_gamerscore(),
             self.total_gamerscore()
         )
@@ -909,7 +909,7 @@ mod tests {
             service_config_id: page.service_config_id,
             achievements: page.achievements,
         };
-        assert_eq!(board.gamerscore_label(), "10 / 25 GS");
+        assert_eq!(board.gamerscore_label(), "10 / 25");
         assert_eq!(board.unlocked_label(), "1 / 2 Unlocked");
         assert!((board.progress_fraction() - 0.4).abs() < 0.001);
     }

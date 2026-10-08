@@ -660,6 +660,13 @@ fn game_header(ui: &mut egui::Ui, title: &Title, board: Option<&TitleAchievement
                     if let Some(board) = board {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            let mark = 16.0;
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(mark, mark),
+                                egui::Sense::hover(),
+                            );
+                            super::theme::gamerscore_icon(ui, rect);
                             ui.label(
                                 egui::RichText::new(board.gamerscore_label())
                                     .size(15.0)
@@ -908,14 +915,23 @@ fn achievement_card(
 
     let text_left = icon_rect.right() + 10.0;
     let text_width = (inner.right() - text_left).max(40.0);
-    let badge = format!("{} GS", achievement.gamerscore);
+    let badge_color = if unlocked { MUTED } else { TEXT };
     let badge_galley = ui.painter().layout_no_wrap(
-        badge,
-        egui::FontId::proportional(11.0),
-        if unlocked { MUTED } else { TEXT },
+        achievement.gamerscore.to_string(),
+        egui::FontId::proportional(12.0),
+        badge_color,
     );
-    let badge_w = badge_galley.size().x + 14.0;
-    let name_w = (text_width - badge_w - 8.0).max(24.0);
+    let mark = 13.0;
+    let score_w = mark + 4.0 + badge_galley.size().x;
+    let button_w = 72.0_f32;
+    let button_h = 22.0_f32;
+    let show_unlock = !unlocked;
+    let right_w = if show_unlock {
+        button_w.max(score_w)
+    } else {
+        score_w
+    };
+    let name_w = (text_width - right_w - 8.0).max(24.0);
     let name_color = if unlocked {
         Color32::from_rgb(176, 180, 190)
     } else {
@@ -925,27 +941,23 @@ fn achievement_card(
     let name_y = inner.top();
     ui.painter()
         .galley(egui::pos2(text_left, name_y), name, name_color);
-
-    let badge_rect = egui::Rect::from_min_size(
-        egui::pos2(inner.right() - badge_w, name_y),
-        egui::vec2(badge_w, 18.0),
+    let row_center = name_y + 8.0;
+    let score_right = inner.right();
+    let mark_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            score_right - badge_galley.size().x - 4.0 - mark / 2.0,
+            row_center,
+        ),
+        egui::vec2(mark, mark),
     );
-    ui.painter().rect_filled(
-        badge_rect,
-        egui::CornerRadius::same(5),
-        if unlocked {
-            Color32::from_rgb(46, 49, 58)
-        } else {
-            ACCENT
-        },
-    );
+    super::theme::gamerscore_icon(ui, mark_rect);
     ui.painter().galley(
         egui::pos2(
-            badge_rect.center().x - badge_galley.size().x / 2.0,
-            badge_rect.center().y - badge_galley.size().y / 2.0,
+            mark_rect.right() + 4.0,
+            row_center - badge_galley.size().y / 2.0,
         ),
         badge_galley,
-        if unlocked { MUTED } else { TEXT },
+        badge_color,
     );
 
     let detail = if unlocked {
@@ -959,12 +971,10 @@ fn achievement_card(
     } else {
         description.as_str()
     };
-    let description = fit_line(ui, description, 12.0, detail, text_width);
+    let description = fit_line(ui, description, 12.0, detail, name_w);
     ui.painter()
         .galley(egui::pos2(text_left, name_y + 20.0), description, detail);
 
-    let button_w = 58.0;
-    let show_unlock = !unlocked;
     let meta_w = if show_unlock {
         (text_width - button_w - 6.0).max(24.0)
     } else {
@@ -977,8 +987,8 @@ fn achievement_card(
     let mut unlock = false;
     if show_unlock {
         let button = egui::Rect::from_min_size(
-            egui::pos2(inner.right() - button_w, name_y + 36.0),
-            egui::vec2(button_w, 18.0),
+            egui::pos2(inner.right() - button_w, name_y + 34.0),
+            egui::vec2(button_w, button_h),
         );
         let click = ui.interact(
             button,
@@ -998,7 +1008,7 @@ fn achievement_card(
             button.center(),
             egui::Align2::CENTER_CENTER,
             if pending { "..." } else { "Unlock" },
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(12.0),
             if pending { MUTED } else { TEXT },
         );
         if click.hovered() && !pending {

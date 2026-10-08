@@ -341,11 +341,25 @@ fn achievement_bar(ui: &mut egui::Ui, rect: egui::Rect, title: &Title) {
         egui::FontId::proportional(12.0),
         TEXT,
     );
-    ui.painter().text(
-        rect.right_center() + egui::vec2(-8.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        score,
-        egui::FontId::proportional(12.0),
+    let score_galley =
+        ui.painter()
+            .layout_no_wrap(score, egui::FontId::proportional(12.0), TEXT);
+    let mark = 12.0;
+    let score_right = rect.right() - 8.0;
+    let mark_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            score_right - score_galley.size().x - 4.0 - mark / 2.0,
+            rect.center().y,
+        ),
+        egui::vec2(mark, mark),
+    );
+    super::theme::gamerscore_icon(ui, mark_rect);
+    ui.painter().galley(
+        egui::pos2(
+            mark_rect.right() + 4.0,
+            rect.center().y - score_galley.size().y / 2.0,
+        ),
+        score_galley,
         TEXT,
     );
 }

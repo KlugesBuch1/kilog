@@ -7,6 +7,12 @@ pub const TEXT: Color32 = Color32::from_rgb(236, 237, 240);
 pub const MUTED: Color32 = Color32::from_rgb(148, 154, 166);
 pub const ACCENT: Color32 = Color32::from_rgb(194, 43, 114);
 
+pub(super) fn gamerscore_icon(ui: &egui::Ui, rect: egui::Rect) {
+    egui::Image::new(egui::include_image!("../../assets/img/gamerscore.svg"))
+        .fit_to_exact_size(rect.size())
+        .paint_at(ui, rect);
+}
+
 pub(super) fn search_field(
     ui: &mut egui::Ui,
     text: &mut String,
