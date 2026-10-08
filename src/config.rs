@@ -7,20 +7,12 @@ use crate::error::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct AppConfig {
-    pub check_for_game_updates: bool,
-    pub check_for_app_updates: bool,
-    pub unlock_all: bool,
-    pub auto_spoofer: bool,
     pub force_region: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            check_for_game_updates: true,
-            check_for_app_updates: true,
-            unlock_all: false,
-            auto_spoofer: false,
             force_region: false,
         }
     }
