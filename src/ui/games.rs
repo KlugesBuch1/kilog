@@ -14,20 +14,6 @@ impl KilogApp {
     pub(super) fn games_page(&mut self, ui: &mut egui::Ui) {
         let mut refresh = false;
         ui.horizontal(|ui| {
-            let fill = ui.visuals().widgets.inactive.bg_fill;
-            let text_edit = ui.visuals().text_edit_bg_color();
-            crate::debug_agent::log_once(
-                "search-theme",
-                "J",
-                "ui/games.rs:search",
-                "search field uses default widget fill",
-                serde_json::json!({
-                    "inactiveBg": format!("{fill:?}"),
-                    "textEditBg": format!("{text_edit:?}"),
-                    "cardBg": "Color32([26, 28, 34, 255])",
-                    "canvas": "Color32([16, 17, 20, 255])",
-                }),
-            );
             super::theme::search_field(ui, &mut self.games_search, "Search for a game", 320.0);
             egui::ComboBox::from_id_salt("game_filter")
                 .selected_text(self.games_filter.label())
@@ -162,20 +148,9 @@ impl KilogApp {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.titles_rx = Some(rx);
         self.runtime.spawn(async move {
-            let started = std::time::Instant::now();
             let result = crate::xbox::titles::fetch_title_history(&authorization, &xuid, &language)
                 .await
                 .map_err(|err| err.to_string());
-            crate::debug_agent::log(
-                "S",
-                "ui/games.rs:spawn_titles",
-                "title history finished",
-                serde_json::json!({
-                    "elapsedMs": started.elapsed().as_millis() as u64,
-                    "ok": result.is_ok(),
-                    "titles": result.as_ref().map(|list| list.titles.len()).unwrap_or(0),
-                }),
-            );
             let _ = tx.send((epoch, result));
             ctx.request_repaint();
         });
@@ -199,12 +174,6 @@ impl KilogApp {
         }
         match result {
             Ok(list) => {
-                crate::debug_agent::log(
-                    "A",
-                    "ui/games.rs:poll_titles",
-                    "title cover census",
-                    cover_census(&list),
-                );
                 self.titles_error = None;
                 self.titles = Some(list);
             }
@@ -233,22 +202,6 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
     let card_w = (width - GAP * (cols.saturating_sub(1) as f32)) / cols as f32;
     let card_h = card_w + 96.0;
     let rows = matched.len().div_ceil(cols);
-    crate::debug_agent::log_once(
-        "grid-metrics",
-        "G",
-        "ui/games.rs:paint_grid",
-        "games grid metrics",
-        serde_json::json!({
-            "availableWidth": width,
-            "usedWidth": width,
-            "cols": cols,
-            "rows": rows,
-            "matched": matched.len(),
-            "cardW": card_w,
-            "cardH": card_h,
-            "rowStrideGuess": card_h + GAP,
-        }),
-    );
     ui.spacing_mut().item_spacing.y = GAP;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -259,7 +212,7 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
                     for col in 0..cols {
                         let index = row * cols + col;
                         if let Some(title) = matched.get(index) {
-                            title_card(ui, title, index, card_w, card_h);
+                            title_card(ui, title, card_w, card_h);
                         }
                     }
                 });
@@ -267,7 +220,7 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
         });
 }
 
-fn title_card(ui: &mut egui::Ui, title: &Title, index: usize, card_w: f32, card_h: f32) {
+fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::hover());
     let fill = if response.hovered() {
         Color32::from_rgb(32, 35, 42)
@@ -281,34 +234,10 @@ fn title_card(ui: &mut egui::Ui, title: &Title, index: usize, card_w: f32, card_
     let cover = inner.width();
     let image = egui::Rect::from_min_size(inner.min, egui::vec2(cover, cover));
     if let Some(url) = title.cover_url() {
-        let loaded = ui
-            .ctx()
-            .try_load_image(&url, egui::load::SizeHint::default());
-        let status = match &loaded {
-            Ok(egui::load::ImagePoll::Pending { .. }) => "pending".to_owned(),
-            Ok(egui::load::ImagePoll::Ready { .. }) => "ready".to_owned(),
-            Err(err) => format!("err:{err}"),
-        };
-        note_image_load(&url, &status);
         egui::Image::from_uri(&url)
             .fit_to_exact_size(image.size())
             .corner_radius(10)
             .paint_at(ui, image);
-        if index < 3 {
-            crate::debug_agent::log_once(
-                &format!("card-geom-{index}"),
-                "D",
-                "ui/games.rs:title_card",
-                "card versus image widget rect",
-                serde_json::json!({
-                    "index": index,
-                    "card": rect_data(rect),
-                    "imageSlot": rect_data(image),
-                    "imageWidget": rect_data(image),
-                    "widgetOutsideCard": !rect.contains_rect(image),
-                }),
-            );
-        }
     } else {
         ui.painter().rect_filled(
             image,
@@ -427,139 +356,6 @@ fn platform_tags(ui: &mut egui::Ui, rect: egui::Rect, devices: &[String]) {
             TEXT,
         );
         x += chip_w + 4.0;
-    }
-}
-
-fn rect_data(rect: egui::Rect) -> serde_json::Value {
-    serde_json::json!({
-        "x": rect.min.x,
-        "y": rect.min.y,
-        "w": rect.width(),
-        "h": rect.height(),
-    })
-}
-
-fn cover_census(list: &TitlesList) -> serde_json::Value {
-    let mut hosts = std::collections::BTreeMap::<String, usize>::new();
-    let mut http = 0;
-    let mut https = 0;
-    let mut other = 0;
-    let mut empty = 0;
-    let mut store = 0;
-    let mut store_with_query = 0;
-    let mut samples = Vec::new();
-    for title in &list.titles {
-        let Some(raw) = title
-            .display_image
-            .as_deref()
-            .filter(|image| !image.is_empty())
-        else {
-            empty += 1;
-            continue;
-        };
-        if raw.starts_with("https://") {
-            https += 1;
-        } else if raw.starts_with("http://") {
-            http += 1;
-        } else {
-            other += 1;
-        }
-        if raw.contains("store-images.s-microsoft.com") {
-            store += 1;
-            if raw.contains('?') {
-                store_with_query += 1;
-            }
-        }
-        let host = raw
-            .split("://")
-            .nth(1)
-            .unwrap_or(raw)
-            .split(['/', '?'])
-            .next()
-            .unwrap_or("unknown");
-        *hosts.entry(host.to_owned()).or_default() += 1;
-        if samples.len() < 8 {
-            let shown: String = raw.chars().take(140).collect();
-            samples.push(shown);
-        }
-    }
-    serde_json::json!({
-        "titles": list.titles.len(),
-        "empty": empty,
-        "http": http,
-        "https": https,
-        "other": other,
-        "storeImages": store,
-        "storeImagesAlreadyQueried": store_with_query,
-        "hosts": hosts,
-        "samples": samples,
-    })
-}
-
-fn note_image_load(url: &str, status: &str) {
-    use std::sync::Mutex;
-    struct Stats {
-        status: std::collections::HashMap<String, String>,
-        logged: usize,
-        summarized: bool,
-    }
-    static STATS: std::sync::LazyLock<Mutex<Stats>> = std::sync::LazyLock::new(|| {
-        Mutex::new(Stats {
-            status: std::collections::HashMap::new(),
-            logged: 0,
-            summarized: false,
-        })
-    });
-    let mut stats = STATS.lock().unwrap_or_else(|err| err.into_inner());
-    if stats.status.get(url).map(String::as_str) == Some(status) {
-        return;
-    }
-    stats.status.insert(url.to_owned(), status.to_owned());
-    let host = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split(['/', '?'])
-        .next()
-        .unwrap_or("unknown");
-    if status != "pending" && stats.logged < 24 {
-        stats.logged += 1;
-        let shown: String = url.chars().take(140).collect();
-        crate::debug_agent::log(
-            "C",
-            "ui/games.rs:title_card",
-            "image load result",
-            serde_json::json!({
-                "status": status,
-                "host": host,
-                "url": shown,
-            }),
-        );
-    }
-    let ready = stats
-        .status
-        .values()
-        .filter(|s| s.as_str() == "ready")
-        .count();
-    let pending = stats
-        .status
-        .values()
-        .filter(|s| s.as_str() == "pending")
-        .count();
-    let failed = stats.status.len() - ready - pending;
-    if !stats.summarized && (failed + ready >= 6 || stats.status.len() >= 20) {
-        stats.summarized = true;
-        crate::debug_agent::log(
-            "C",
-            "ui/games.rs:title_card",
-            "image load summary",
-            serde_json::json!({
-                "ready": ready,
-                "pending": pending,
-                "failed": failed,
-                "tracked": stats.status.len(),
-            }),
-        );
     }
 }
 

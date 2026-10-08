@@ -78,12 +78,6 @@ impl KilogApp {
     ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        crate::debug_agent::log(
-            "K",
-            "ui/mod.rs:new",
-            "startup does not launch the xbox app",
-            serde_json::json!({ "launchedXboxApp": false }),
-        );
         let mut app = Self {
             runtime,
             page: Page::Home,
@@ -293,7 +287,6 @@ impl KilogApp {
             let result = match crate::auth::authorize_xbox_live(
                 &token.access_token,
                 &token.client_id,
-                token.refresh_token.is_some(),
             )
             .await
             {
@@ -459,7 +452,6 @@ async fn restore_saved_session(refresh: String) -> RestoreUpdate {
     let xbox = match crate::auth::authorize_xbox_live(
         &token.access_token,
         &token.client_id,
-        token.refresh_token.is_some(),
     )
     .await
     {

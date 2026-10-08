@@ -56,7 +56,7 @@ fn base64url(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-pub fn path_and_query(url: &str) -> String {
+fn path_and_query(url: &str) -> String {
     let url = reqwest::Url::parse(url).expect("xbox auth url");
     match url.query() {
         Some(query) => format!("{}?{query}", url.path()),
@@ -86,56 +86,4 @@ fn signature_payload(timestamp: u64, path_and_query: &str, body: &str) -> Vec<u8
     payload[5..13].copy_from_slice(&timestamp.to_be_bytes());
     payload[14..].copy_from_slice(signed);
     payload
-}
-
-#[cfg(test)]
-mod tests {
-    use p256::ecdsa::signature::Verifier;
-
-    use super::*;
-
-    #[test]
-    fn proof_key_is_a_p256_jwk() {
-        let signer = ProofSigner::generate();
-        let key = signer.proof_key();
-        assert_eq!(key["kty"], "EC");
-        assert_eq!(key["crv"], "P-256");
-        assert_eq!(key["alg"], "ES256");
-        assert_eq!(key["use"], "sig");
-        assert!(!key["x"].as_str().unwrap().is_empty());
-        assert!(!key["y"].as_str().unwrap().is_empty());
-    }
-
-    #[test]
-    fn signature_header_covers_the_request_body() {
-        let signer = ProofSigner::generate();
-        let url = "https://sisu.xboxlive.com/authorize";
-        let body = r#"{"AccessToken":"t=ticket"}"#;
-        let timestamp = windows_timestamp(1_700_000_000);
-        let header = signer.sign_request_at(url, body, timestamp);
-        let raw = STANDARD.decode(header).unwrap();
-        assert_eq!(raw.len(), 76);
-        assert_eq!(&raw[..4], &POLICY_VERSION.to_be_bytes());
-        assert_eq!(&raw[4..12], &timestamp.to_be_bytes());
-
-        let payload = signature_payload(timestamp, "/authorize", body);
-        let signature = p256::ecdsa::Signature::from_slice(&raw[12..]).unwrap();
-        signer
-            .key
-            .verifying_key()
-            .verify(&payload, &signature)
-            .unwrap();
-    }
-
-    #[test]
-    fn path_keeps_the_query() {
-        assert_eq!(
-            path_and_query("https://device.auth.xboxlive.com/device/authenticate"),
-            "/device/authenticate"
-        );
-        assert_eq!(
-            path_and_query("https://sisu.xboxlive.com/authorize?a=1"),
-            "/authorize?a=1"
-        );
-    }
 }

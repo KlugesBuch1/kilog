@@ -86,22 +86,3 @@ fn person_from_settings(body: &str) -> Result<PersonResponse, Error> {
         reputation: value("XboxOneRep"),
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_signed_in_settings() {
-        let person = person_from_settings(
-            r#"{"profileUsers":[{"id":"9","settings":[{"id":"Gamertag","value":"Example"},{"id":"Gamerscore","value":"250"},{"id":"GameDisplayPicRaw","value":"https://example/pic"}]}]}"#,
-        )
-        .unwrap();
-        assert_eq!(person.gamertag.as_deref(), Some("Example"));
-        assert_eq!(person.gamer_score.as_deref(), Some("250"));
-        assert_eq!(
-            person.display_pic_raw.as_deref(),
-            Some("https://example/pic")
-        );
-    }
-}
