@@ -3,6 +3,7 @@ use std::time::Duration;
 const HEARTBEAT_URL: &str =
     "https://presence-heartbeat.xboxlive.com/users/xuid({xuid})/devices/current/";
 const CONTRACT_VERSION: &str = "3";
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 pub struct HeartbeatSession {
     pub xuid: String,
@@ -46,10 +47,6 @@ pub fn heartbeat_url(xuid: &str) -> String {
     HEARTBEAT_URL.replace("{xuid}", xuid)
 }
 
-pub fn heartbeat_interval(mix: u64) -> Duration {
-    Duration::from_secs(30 + (mix % 16))
-}
-
 pub fn spawn_heartbeat(
     runtime: &tokio::runtime::Handle,
     session: HeartbeatSession,
@@ -60,6 +57,7 @@ pub fn spawn_heartbeat(
     let task = runtime.spawn(async move {
         let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
+            .http1_only()
             .build()
         {
             Ok(client) => client,
@@ -75,21 +73,18 @@ pub fn spawn_heartbeat(
             }
         };
         let mut session = session;
-        let mut tick = 0u64;
         loop {
             if *stop_rx.borrow() {
                 break;
             }
             match beat_once(&client, &mut session).await {
                 Ok(()) => {
-                    let wait = heartbeat_interval(interval_mix(tick));
-                    tick = tick.wrapping_add(1);
                     emit(&notes, &wake, HeartbeatNote::Sent);
                     if *stop_rx.borrow() {
                         break;
                     }
                     tokio::select! {
-                        _ = tokio::time::sleep(wait) => {}
+                        _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {}
                         _ = stop_rx.changed() => {}
                     }
                 }
@@ -220,12 +215,4 @@ impl std::fmt::Display for HeartbeatError {
             Self::Rejected(message) | Self::Transport(message) => formatter.write_str(message),
         }
     }
-}
-
-fn interval_mix(tick: u64) -> u64 {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.subsec_nanos() as u64)
-        .unwrap_or(0);
-    nanos ^ tick.wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
