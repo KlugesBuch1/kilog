@@ -304,6 +304,81 @@ pub async fn fetch_user_title(
     }))
 }
 
+pub async fn fetch_minutes_played(
+    authorization: &str,
+    xuid: &str,
+    title_id: u64,
+) -> Result<Option<u64>, Error> {
+    if xuid.trim().is_empty() {
+        return Err(Error::Xbox("xuid is empty".into()));
+    }
+    if authorization.trim().is_empty() {
+        return Err(Error::Xbox("authorization is empty".into()));
+    }
+    let body = serde_json::json!({
+        "arrangeByField": "xuid",
+        "xuids": [xuid],
+        "stats": [{
+            "name": "MinutesPlayed",
+            "titleId": title_id.to_string(),
+        }],
+    });
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?
+        .post("https://userstats.xboxlive.com/batch")
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "2")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(body.to_string())
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        let snippet: String = text.chars().take(180).collect();
+        return Err(Error::Xbox(format!(
+            "play time returned {}: {snippet}",
+            status.as_u16()
+        )));
+    }
+    Ok(minutes_from_stats(&text))
+}
+
+fn minutes_from_stats(body: &str) -> Option<u64> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let lists = value
+        .get("statlistscollection")
+        .or_else(|| value.get("statListsCollection"))?
+        .as_array()?;
+    for list in lists {
+        let Some(stats) = list.get("stats").and_then(|stats| stats.as_array()) else {
+            continue;
+        };
+        for stat in stats {
+            let name = stat.get("name").and_then(|name| name.as_str()).unwrap_or("");
+            if name.eq_ignore_ascii_case("MinutesPlayed") {
+                return json_minutes(stat.get("value")?);
+            }
+        }
+    }
+    None
+}
+
+fn json_minutes(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64().or_else(|| {
+            number
+                .as_f64()
+                .filter(|minutes| minutes.is_finite() && *minutes >= 0.0)
+                .map(|minutes| minutes.round() as u64)
+        }),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 const TITLE_DETAIL_URL: &str =
     "https://titlehub.xboxlive.com/titles/titleid({title_id})/decoration/detail";
 const TITLE_BATCH_URL: &str = "https://titlehub.xboxlive.com/titles/batch/decoration/detail";

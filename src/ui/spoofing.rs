@@ -13,7 +13,6 @@ use crate::xbox::titles::{Title, parse_title_id};
 #[derive(Clone, PartialEq, Eq)]
 enum PlayedSnapshot {
     Duration(Duration),
-    LastPlayed(String),
     Unknown,
 }
 
@@ -77,13 +76,8 @@ impl KilogApp {
         let mut start = false;
         let mut stop = false;
 
-        ui.label(egui::RichText::new("Title ID").size(13.0).color(MUTED));
-        let title_id = ui.add(
-            egui::TextEdit::singleline(&mut self.spoof.title_id)
-                .hint_text("1736878239")
-                .desired_width(240.0)
-                .font(egui::FontId::proportional(15.0)),
-        );
+        let title_id =
+            super::theme::search_field(ui, &mut self.spoof.title_id, "Title ID", 320.0);
         if title_id.lost_focus() {
             restart = true;
             if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -298,13 +292,8 @@ impl KilogApp {
         if art.cover_url.is_some() {
             self.spoof.cover_url = art.cover_url;
         }
-        let replace_played = match (&self.spoof.played, &art.played) {
-            (PlayedSnapshot::Duration(_), PlayedSnapshot::LastPlayed(_)) => false,
-            (_, PlayedSnapshot::Unknown) => false,
-            _ => true,
-        };
-        if replace_played {
-            self.spoof.played = art.played;
+        if let PlayedSnapshot::Duration(played) = art.played {
+            self.spoof.played = PlayedSnapshot::Duration(played);
         }
     }
 
@@ -354,32 +343,20 @@ struct KnownTitle {
 }
 
 fn played_snapshot(title: &Title) -> PlayedSnapshot {
-    let minutes = title.minutes_played.or_else(|| {
-        title
-            .title_history
-            .as_ref()
-            .and_then(|history| history.minutes_played)
-    });
-    if let Some(minutes) = minutes {
-        return PlayedSnapshot::Duration(Duration::from_secs(minutes.saturating_mul(60)));
-    }
     title
-        .title_history
-        .as_ref()
-        .and_then(|history| history.last_time_played.as_deref())
-        .map(played_date)
-        .filter(|date| !date.is_empty())
-        .map(PlayedSnapshot::LastPlayed)
+        .minutes_played
+        .or_else(|| {
+            title
+                .title_history
+                .as_ref()
+                .and_then(|history| history.minutes_played)
+        })
+        .map(minutes_played)
         .unwrap_or(PlayedSnapshot::Unknown)
 }
 
-fn played_date(raw: &str) -> String {
-    let date = raw.trim().split('T').next().unwrap_or(raw.trim());
-    if date.len() >= 10 {
-        date[..10].to_owned()
-    } else {
-        date.to_owned()
-    }
+fn minutes_played(minutes: u64) -> PlayedSnapshot {
+    PlayedSnapshot::Duration(Duration::from_secs(minutes.saturating_mul(60)))
 }
 
 async fn load_spoof_art(
@@ -388,23 +365,29 @@ async fn load_spoof_art(
     title_id: u64,
     language: String,
 ) -> SpoofArt {
-    if let Ok(Some(title)) =
+    let mut art = if let Ok(Some(title)) =
         crate::xbox::titles::fetch_user_title(&authorization, &xuid, title_id, &language).await
     {
-        return art_from(&title, title_id);
-    }
-    if let Ok(lookup) =
+        art_from(&title, title_id)
+    } else if let Ok(lookup) =
         crate::xbox::titles::lookup_titles(&authorization, &[title_id], &language).await
         && let Some(title) = lookup.titles.into_iter().next()
     {
-        return art_from(&title, title_id);
+        art_from(&title, title_id)
+    } else {
+        SpoofArt {
+            title_id,
+            name: None,
+            cover_url: None,
+            played: PlayedSnapshot::Unknown,
+        }
+    };
+    if let Ok(Some(minutes)) =
+        crate::xbox::titles::fetch_minutes_played(&authorization, &xuid, title_id).await
+    {
+        art.played = minutes_played(minutes);
     }
-    SpoofArt {
-        title_id,
-        name: None,
-        cover_url: None,
-        played: PlayedSnapshot::Unknown,
-    }
+    art
 }
 
 fn art_from(title: &Title, title_id: u64) -> SpoofArt {
@@ -447,12 +430,11 @@ fn cover_card(ui: &mut egui::Ui, spoof: &SpoofState) {
                         .unwrap_or_else(|| "00:00:00".to_owned());
                     fact(ui, "Spoofed", &spoofed);
                     ui.add_space(8.0);
-                    let (label, value) = match &spoof.played {
-                        PlayedSnapshot::Duration(played) => ("Played", format_played(*played)),
-                        PlayedSnapshot::LastPlayed(date) => ("Last played", date.clone()),
-                        PlayedSnapshot::Unknown => ("Played", "—".to_owned()),
+                    let played = match &spoof.played {
+                        PlayedSnapshot::Duration(played) => format_played(*played),
+                        PlayedSnapshot::Unknown => "—".to_owned(),
                     };
-                    fact(ui, label, &value);
+                    fact(ui, "Time Played", &played);
                 });
             });
         });

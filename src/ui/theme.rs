@@ -22,7 +22,8 @@ pub(super) fn search_field(
         .inner_margin(egui::Margin::symmetric(14, 0))
         .show(ui, |ui| {
             ui.set_width(width - 28.0);
-            ui.set_min_height(height);
+            ui.set_max_width(width - 28.0);
+            ui.set_max_height(height);
             ui.horizontal_centered(|ui| {
                 ui.add(
                     Lucide::Search
