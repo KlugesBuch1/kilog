@@ -357,7 +357,10 @@ fn minutes_from_stats(body: &str) -> Option<u64> {
             continue;
         };
         for stat in stats {
-            let name = stat.get("name").and_then(|name| name.as_str()).unwrap_or("");
+            let name = stat
+                .get("name")
+                .and_then(|name| name.as_str())
+                .unwrap_or("");
             if name.eq_ignore_ascii_case("MinutesPlayed") {
                 return json_minutes(stat.get("value")?);
             }

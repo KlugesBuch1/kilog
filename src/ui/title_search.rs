@@ -225,9 +225,11 @@ impl KilogApp {
         let mut select = None;
         let selected_id = self.title_search.selected.clone();
         let height = ui.available_height();
-        let show_detail = selected_id
-            .as_ref()
-            .is_some_and(|id| results.iter().any(|title| title.title_id.as_deref() == Some(id)));
+        let show_detail = selected_id.as_ref().is_some_and(|id| {
+            results
+                .iter()
+                .any(|title| title.title_id.as_deref() == Some(id))
+        });
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), height),
             egui::Layout::left_to_right(egui::Align::Min),
@@ -247,8 +249,9 @@ impl KilogApp {
                             .show(ui, |ui| {
                                 for title in &results[..count] {
                                     let id = title.title_id.clone();
-                                    let chosen =
-                                        id.as_deref().is_some_and(|id| Some(id) == selected_id.as_deref());
+                                    let chosen = id
+                                        .as_deref()
+                                        .is_some_and(|id| Some(id) == selected_id.as_deref());
                                     if result_row(ui, title, chosen).clicked() {
                                         select = id;
                                     }
@@ -284,9 +287,9 @@ impl KilogApp {
                     },
                 );
                 if show_detail
-                    && let Some(title) = results.iter().find(|title| {
-                        title.title_id.as_deref() == selected_id.as_deref()
-                    })
+                    && let Some(title) = results
+                        .iter()
+                        .find(|title| title.title_id.as_deref() == selected_id.as_deref())
                 {
                     ui.add_space(GAP);
                     let kind = selected_id
@@ -594,11 +597,9 @@ fn result_row(ui: &mut egui::Ui, title: &Title, selected: bool) -> egui::Respons
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), fill);
     let inner = rect.shrink2(egui::vec2(12.0, 0.0));
-    let id_galley = ui.painter().layout_no_wrap(
-        id.to_owned(),
-        egui::FontId::proportional(12.0),
-        MUTED,
-    );
+    let id_galley =
+        ui.painter()
+            .layout_no_wrap(id.to_owned(), egui::FontId::proportional(12.0), MUTED);
     let name_width = (inner.width() - id_galley.size().x - 16.0).max(40.0);
     let name_galley = ui.painter().layout(
         name.to_owned(),
@@ -607,10 +608,7 @@ fn result_row(ui: &mut egui::Ui, title: &Title, selected: bool) -> egui::Respons
         name_width,
     );
     ui.painter().galley(
-        egui::pos2(
-            inner.left(),
-            inner.center().y - name_galley.size().y / 2.0,
-        ),
+        egui::pos2(inner.left(), inner.center().y - name_galley.size().y / 2.0),
         name_galley,
         TEXT,
     );
@@ -647,7 +645,8 @@ fn detail_panel(
                 .show(ui, |ui| {
                     ui.set_width(DETAIL_W - 28.0);
                     let cover = 168.0;
-                    let image = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(cover, cover));
+                    let image =
+                        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(cover, cover));
                     ui.allocate_exact_size(image.size(), egui::Sense::hover());
                     if let Some(url) = title.cover_url() {
                         egui::Image::from_uri(url)
@@ -667,7 +666,10 @@ fn detail_panel(
                             .image()
                             .paint_at(
                                 ui,
-                                egui::Rect::from_center_size(image.center(), egui::vec2(28.0, 28.0)),
+                                egui::Rect::from_center_size(
+                                    image.center(),
+                                    egui::vec2(28.0, 28.0),
+                                ),
                             );
                     }
                     ui.add_space(12.0);
@@ -696,11 +698,7 @@ fn detail_panel(
                     ui.label(egui::RichText::new("Type").size(12.0).color(MUTED));
                     match kind {
                         Some(KindState::Ready(style)) => {
-                            ui.label(
-                                egui::RichText::new(style.label())
-                                    .size(15.0)
-                                    .color(TEXT),
-                            );
+                            ui.label(egui::RichText::new(style.label()).size(15.0).color(TEXT));
                         }
                         Some(KindState::Failed(message)) => {
                             ui.label(

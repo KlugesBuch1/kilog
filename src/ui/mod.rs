@@ -1,3 +1,4 @@
+mod achievements;
 mod games;
 mod home;
 mod page;
@@ -66,6 +67,7 @@ pub struct KilogApp {
     titles_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<TitlesList, String>)>>,
     titles_epoch: u64,
     title_search: title_search::TitleSearch,
+    achievements_page: achievements::AchievementPage,
     spoof: spoofing::SpoofState,
 }
 
@@ -103,6 +105,7 @@ impl KilogApp {
             titles_rx: None,
             titles_epoch: 0,
             title_search: title_search::TitleSearch::new(),
+            achievements_page: achievements::AchievementPage::new(),
             spoof: spoofing::SpoofState::new(),
         };
         match boot {
@@ -160,6 +163,7 @@ impl KilogApp {
         self.profile_error = None;
         self.xbox = None;
         self.clear_titles();
+        self.achievements_page.clear();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
         self.auth_task = Some(self.runtime.spawn(async move {
@@ -190,6 +194,7 @@ impl KilogApp {
         self.games_search.clear();
         self.games_filter = GameFilter::All;
         self.title_search.clear();
+        self.achievements_page.clear();
         self.stop_spoofing();
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
@@ -284,20 +289,17 @@ impl KilogApp {
         self.profile_error = None;
         self.profile_rx = Some(rx);
         self.runtime.spawn(async move {
-            let result = match crate::auth::authorize_xbox_live(
-                &token.access_token,
-                &token.client_id,
-            )
-            .await
-            {
-                Ok(xbox) => {
-                    let profile = crate::xbox::profile::fetch_me(&xbox.authorization)
-                        .await
-                        .map_err(|err| err.to_string());
-                    Ok(ProfileLoad { xbox, profile })
-                }
-                Err(err) => Err(err.to_string()),
-            };
+            let result =
+                match crate::auth::authorize_xbox_live(&token.access_token, &token.client_id).await
+                {
+                    Ok(xbox) => {
+                        let profile = crate::xbox::profile::fetch_me(&xbox.authorization)
+                            .await
+                            .map_err(|err| err.to_string());
+                        Ok(ProfileLoad { xbox, profile })
+                    }
+                    Err(err) => Err(err.to_string()),
+                };
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -362,6 +364,8 @@ impl KilogApp {
             self.title_search_page(ui);
         } else if self.page == Page::Settings {
             self.settings_form(ui);
+        } else if self.page == Page::Achievements {
+            self.achievements_page(ui);
         } else if self.page == Page::Spoofing {
             self.spoofing_page(ui);
         } else {
@@ -395,6 +399,7 @@ impl eframe::App for KilogApp {
         self.poll_profile();
         self.poll_titles();
         self.poll_title_search(ctx.clone());
+        self.poll_achievements();
         self.poll_heartbeat();
         self.ensure_titles(ctx.clone());
     }
@@ -449,12 +454,7 @@ async fn restore_saved_session(refresh: String) -> RestoreUpdate {
             tracing::error!(error = %err, "failed to store refresh token");
         }
     }
-    let xbox = match crate::auth::authorize_xbox_live(
-        &token.access_token,
-        &token.client_id,
-    )
-    .await
-    {
+    let xbox = match crate::auth::authorize_xbox_live(&token.access_token, &token.client_id).await {
         Ok(xbox) => xbox,
         Err(err) => {
             return RestoreUpdate::SignedIn {

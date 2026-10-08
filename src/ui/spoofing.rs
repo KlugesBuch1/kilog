@@ -76,8 +76,7 @@ impl KilogApp {
         let mut start = false;
         let mut stop = false;
 
-        let title_id =
-            super::theme::search_field(ui, &mut self.spoof.title_id, "Title ID", 320.0);
+        let title_id = super::theme::search_field(ui, &mut self.spoof.title_id, "Title ID", 320.0);
         if title_id.lost_focus() {
             restart = true;
             if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
