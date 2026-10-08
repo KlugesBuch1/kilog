@@ -189,6 +189,7 @@ impl Achievement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TitleAchievements {
     pub title_name: Option<String>,
+    pub service_config_id: Option<String>,
     pub achievements: Vec<Achievement>,
 }
 
@@ -265,6 +266,7 @@ pub async fn fetch_title_achievements(
     let mut achievements = Vec::new();
     let mut seen = HashSet::new();
     let mut title_name = None;
+    let mut service_config_id = None;
     let mut continuation = None;
     for _ in 0..MAX_PAGES {
         let page = fetch_page(
@@ -278,6 +280,9 @@ pub async fn fetch_title_achievements(
         .await?;
         if title_name.is_none() {
             title_name = page.title_name;
+        }
+        if service_config_id.is_none() {
+            service_config_id = page.service_config_id;
         }
         if page.achievements.is_empty() {
             break;
@@ -297,8 +302,99 @@ pub async fn fetch_title_achievements(
     }
     Ok(TitleAchievements {
         title_name,
+        service_config_id,
         achievements,
     })
+}
+
+const UPDATE_URL: &str =
+    "https://achievements.xboxlive.com/users/xuid({xuid})/achievements/{scid}/update";
+const PROGRESS_USER_AGENT: &str = "XboxServicesAPI/2021.10.20211005.0 c";
+const PROGRESS_SIGNATURE: &str = "RGFtbklHb3R0YU1ha2VUaGlzU3RyaW5nU3VwZXJMb25nSHVoLkRvbnRFdmVuS25vd1doYXRTaG91bGRCZUhlcmVEcmFmZlN0cmluZw==";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressStatus {
+    Updated,
+    Unauthorized,
+    Forbidden,
+    Rejected(String),
+}
+
+pub async fn update_achievement_progress(
+    authorization: &str,
+    xuid: &str,
+    title_id: u64,
+    service_config_id: &str,
+    achievement_id: &str,
+    percent_complete: u32,
+) -> Result<ProgressStatus, Error> {
+    require_identity(authorization, xuid)?;
+    let service_config_id = service_config_id.trim();
+    if service_config_id.is_empty() {
+        return Err(Error::Xbox("service config id is empty".into()));
+    }
+    let achievement_id = achievement_id.trim();
+    if achievement_id.is_empty() {
+        return Err(Error::Xbox("achievement id is empty".into()));
+    }
+    let percent_complete = percent_complete.min(100);
+    let url = UPDATE_URL
+        .replace("{xuid}", xuid.trim())
+        .replace("{scid}", service_config_id);
+    let body = progress_payload(
+        service_config_id,
+        title_id,
+        xuid.trim(),
+        achievement_id,
+        percent_complete,
+    );
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?
+        .post(url)
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "2")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .header("User-Agent", PROGRESS_USER_AGENT)
+        .header("Signature", PROGRESS_SIGNATURE)
+        .body(body.to_string())
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    Ok(progress_status(status.as_u16(), &text))
+}
+
+fn progress_payload(
+    service_config_id: &str,
+    title_id: u64,
+    xuid: &str,
+    achievement_id: &str,
+    percent_complete: u32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "action": "progressUpdate",
+        "serviceConfigId": service_config_id,
+        "titleId": title_id.to_string(),
+        "userId": xuid,
+        "achievements": [{
+            "id": achievement_id,
+            "percentComplete": percent_complete.to_string(),
+        }]
+    })
+}
+
+fn progress_status(status: u16, body: &str) -> ProgressStatus {
+    match status {
+        200 | 204 => ProgressStatus::Updated,
+        401 => ProgressStatus::Unauthorized,
+        403 => ProgressStatus::Forbidden,
+        _ => {
+            let snippet: String = body.chars().take(180).collect();
+            ProgressStatus::Rejected(format!("achievements returned {status}: {snippet}"))
+        }
+    }
 }
 
 async fn fetch_page(
@@ -341,16 +437,21 @@ async fn fetch_page(
 struct ParsedPage {
     achievements: Vec<Achievement>,
     title_name: Option<String>,
+    service_config_id: Option<String>,
     continuation: Option<String>,
 }
 
 fn parse_page(body: &str) -> Result<ParsedPage, Error> {
     let body: PageBody = serde_json::from_str(body)?;
     let mut title_name = None;
+    let mut service_config_id = None;
     let mut achievements = Vec::with_capacity(body.achievements.len());
     for raw in body.achievements {
         if title_name.is_none() {
             title_name = association_name(&raw);
+        }
+        if service_config_id.is_none() {
+            service_config_id = present_id(raw.service_config_id.as_deref());
         }
         achievements.push(Achievement::from_raw(raw));
     }
@@ -366,8 +467,18 @@ fn parse_page(body: &str) -> Result<ParsedPage, Error> {
     Ok(ParsedPage {
         achievements,
         title_name,
+        service_config_id,
         continuation,
     })
+}
+
+fn present_id(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 impl Achievement {
@@ -544,6 +655,8 @@ struct PagingInfo {
 struct RawAchievement {
     #[serde(default, deserialize_with = "id_string")]
     id: String,
+    #[serde(default)]
+    service_config_id: Option<String>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -728,6 +841,7 @@ mod tests {
         let body = r#"{
             "achievements": [{
                 "id": "3",
+                "serviceConfigId": "b5dd9daf-0000-0000-0000-000000000000",
                 "name": "Sample",
                 "titleAssociations": [{ "name": "Microsoft Achievements Sample", "id": 3051199919 }],
                 "progressState": "Achieved",
@@ -756,6 +870,10 @@ mod tests {
         assert_eq!(
             page.title_name.as_deref(),
             Some("Microsoft Achievements Sample")
+        );
+        assert_eq!(
+            page.service_config_id.as_deref(),
+            Some("b5dd9daf-0000-0000-0000-000000000000")
         );
         assert_eq!(page.continuation.as_deref(), Some("next"));
         assert_eq!(page.achievements.len(), 2);
@@ -788,6 +906,7 @@ mod tests {
 
         let board = TitleAchievements {
             title_name: page.title_name,
+            service_config_id: page.service_config_id,
             achievements: page.achievements,
         };
         assert_eq!(board.gamerscore_label(), "10 / 25 GS");
@@ -821,6 +940,34 @@ mod tests {
         assert!(achievement.unlocked_at.is_none());
         assert_eq!(achievement.shown_description(), "Hidden until unlocked.");
         assert_eq!(achievement.status_label(), "In progress");
+    }
+
+    #[test]
+    fn progress_payload_sets_completion() {
+        let body = super::progress_payload(
+            "b5dd9daf-0000-0000-0000-000000000000",
+            3051199919,
+            "2810000000000000",
+            "3",
+            100,
+        );
+        assert_eq!(body["action"], "progressUpdate");
+        assert_eq!(body["titleId"], "3051199919");
+        assert_eq!(body["userId"], "2810000000000000");
+        assert_eq!(body["achievements"][0]["id"], "3");
+        assert_eq!(body["achievements"][0]["percentComplete"], "100");
+        assert_eq!(
+            super::progress_status(204, ""),
+            super::ProgressStatus::Updated
+        );
+        assert_eq!(
+            super::progress_status(401, ""),
+            super::ProgressStatus::Unauthorized
+        );
+        assert_eq!(
+            super::progress_status(403, ""),
+            super::ProgressStatus::Forbidden
+        );
     }
 
     #[test]
