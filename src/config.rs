@@ -13,7 +13,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            force_region: false,
+            force_region: true,
         }
     }
 }

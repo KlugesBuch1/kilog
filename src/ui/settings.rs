@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32};
 
 use super::KilogApp;
-use super::theme::{ACCENT, TEXT};
+use super::theme::{ACCENT, MUTED, TEXT};
 
 impl KilogApp {
     pub(super) fn settings_form(&mut self, ui: &mut egui::Ui) {
@@ -9,7 +9,12 @@ impl KilogApp {
         ui.spacing_mut().item_spacing.y = 8.0;
 
         let mut changed = false;
-        changed |= setting_row(ui, "Force region", &mut self.config.force_region);
+        changed |= setting_row(
+            ui,
+            "Force region",
+            Some("Recommended"),
+            &mut self.config.force_region,
+        );
 
         if changed {
             self.save_error = self.config.save().err().map(|err| err.to_string());
@@ -29,7 +34,7 @@ impl KilogApp {
     }
 }
 
-fn setting_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> bool {
+fn setting_row(ui: &mut egui::Ui, label: &str, badge: Option<&str>, value: &mut bool) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::click());
 
@@ -41,13 +46,46 @@ fn setting_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> bool {
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
 
-    ui.painter().text(
-        rect.left_center() + egui::vec2(16.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
+    let label_galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
         egui::FontId::proportional(15.0),
         TEXT,
     );
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + 16.0,
+            rect.center().y - label_galley.size().y / 2.0,
+        ),
+        label_galley.clone(),
+        TEXT,
+    );
+    if let Some(badge) = badge {
+        let badge_galley = ui.painter().layout_no_wrap(
+            badge.to_owned(),
+            egui::FontId::proportional(11.0),
+            MUTED,
+        );
+        let chip = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.left() + 16.0 + label_galley.size().x + 10.0,
+                rect.center().y - 9.0,
+            ),
+            egui::vec2(badge_galley.size().x + 12.0, 18.0),
+        );
+        ui.painter().rect_filled(
+            chip,
+            egui::CornerRadius::same(4),
+            Color32::from_rgb(46, 49, 58),
+        );
+        ui.painter().galley(
+            egui::pos2(
+                chip.left() + 6.0,
+                chip.center().y - badge_galley.size().y / 2.0,
+            ),
+            badge_galley,
+            MUTED,
+        );
+    }
 
     let track = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 34.0, rect.center().y),
