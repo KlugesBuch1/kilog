@@ -280,6 +280,29 @@ impl KilogApp {
         self.spawn_game(ctx, title_id, true);
     }
 
+    pub(super) fn open_game_achievements(&mut self, ctx: egui::Context, title: Title) {
+        let Some(title_id) = title.title_id.as_deref().and_then(parse_title_id) else {
+            self.page = super::page::Page::Achievements;
+            self.achievements_page.cancel();
+            self.achievements_page.selected = Some(title);
+            self.achievements_page.board = None;
+            self.achievements_page.board_error = Some("This title has no Title ID.".into());
+            return;
+        };
+        let id = title_id.to_string();
+        self.page = super::page::Page::Achievements;
+        self.achievements_page.search_error = None;
+        self.achievements_page.board = None;
+        self.achievements_page.board_error = None;
+        self.achievements_page.filter = AchievementFilter::All;
+        self.achievements_page.list_query.clear();
+        self.achievements_page.query = id.clone();
+        self.achievements_page.seen = id.clone();
+        self.achievements_page.searched = id;
+        self.achievements_page.selected = Some(title);
+        self.spawn_game(ctx, title_id, false);
+    }
+
     fn retry_achievements(&mut self, ctx: egui::Context) {
         let Some(title_id) = self
             .achievements_page

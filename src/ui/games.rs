@@ -81,7 +81,11 @@ impl KilogApp {
         let Some(list) = &self.titles else {
             return;
         };
-        paint_grid(ui, list, filter, &search);
+        let opened = paint_grid(ui, list, filter, &search);
+        if let Some(title) = opened {
+            let ctx = ui.ctx().clone();
+            self.open_game_achievements(ctx, title);
+        }
     }
 
     fn can_fetch_titles(&self) -> bool {
@@ -182,7 +186,12 @@ impl KilogApp {
     }
 }
 
-fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: &str) {
+fn paint_grid(
+    ui: &mut egui::Ui,
+    list: &TitlesList,
+    filter: GameFilter,
+    search: &str,
+) -> Option<Title> {
     let matched: Vec<&Title> = list
         .titles
         .iter()
@@ -194,7 +203,7 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
                 .size(15.0)
                 .color(MUTED),
         );
-        return;
+        return None;
     }
 
     let width = ui.available_width();
@@ -202,6 +211,7 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
     let card_w = (width - GAP * (cols.saturating_sub(1) as f32)) / cols as f32;
     let card_h = card_w + 96.0;
     let rows = matched.len().div_ceil(cols);
+    let mut opened = None;
     ui.spacing_mut().item_spacing.y = GAP;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -211,17 +221,20 @@ fn paint_grid(ui: &mut egui::Ui, list: &TitlesList, filter: GameFilter, search: 
                     ui.spacing_mut().item_spacing.x = GAP;
                     for col in 0..cols {
                         let index = row * cols + col;
-                        if let Some(title) = matched.get(index) {
-                            title_card(ui, title, card_w, card_h);
+                        if let Some(title) = matched.get(index)
+                            && title_card(ui, title, card_w, card_h).clicked()
+                        {
+                            opened = Some((*title).clone());
                         }
                     }
                 });
             }
         });
+    opened
 }
 
-fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::hover());
+fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::click());
     let fill = if response.hovered() {
         Color32::from_rgb(32, 35, 42)
     } else {
@@ -286,7 +299,10 @@ fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) {
 
     let title_id = title.title_id.as_deref().unwrap_or("—");
     let pfn = title.pfn.as_deref().unwrap_or("—");
-    response.on_hover_text(format!("{name}\nTitle ID {title_id}\n{pfn}"));
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.on_hover_text(format!("{name}\nTitle ID {title_id}\n{pfn}"))
 }
 
 fn achievement_bar(ui: &mut egui::Ui, rect: egui::Rect, title: &Title) {
