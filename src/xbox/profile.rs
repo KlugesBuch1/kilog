@@ -29,6 +29,55 @@ impl PersonResponse {
     }
 }
 
+pub async fn xuid_for_gamertag(authorization: &str, gamertag: &str) -> Result<String, Error> {
+    let gamertag = gamertag.trim();
+    if gamertag.is_empty() {
+        return Err(Error::Xbox("gamertag is empty".into()));
+    }
+    if authorization.trim().is_empty() {
+        return Err(Error::Xbox("authorization is empty".into()));
+    }
+    let url = format!(
+        "https://profile.xboxlive.com/users/gt({})/profile/settings?settings=Gamertag",
+        encode_gamertag(gamertag)
+    );
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?
+        .get(url)
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "2")
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        let snippet: String = body.chars().take(180).collect();
+        return Err(Error::Xbox(format!(
+            "gamertag lookup returned {}: {snippet}",
+            status.as_u16()
+        )));
+    }
+    let person = person_from_settings(&body)?;
+    person
+        .xuid
+        .filter(|xuid| !xuid.trim().is_empty())
+        .ok_or_else(|| Error::Xbox(format!("no xuid for {gamertag}")))
+}
+
+fn encode_gamertag(gamertag: &str) -> String {
+    let mut encoded = String::new();
+    for byte in gamertag.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 pub async fn fetch_me(authorization: &str) -> Result<PersonResponse, Error> {
     let body = reqwest::Client::new()
         .get("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag,Gamerscore,GameDisplayPicRaw,AccountTier,Bio,Location,XboxOneRep")

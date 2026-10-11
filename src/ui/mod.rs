@@ -1,4 +1,5 @@
 mod achievements;
+mod auto_unlock;
 mod games;
 mod home;
 mod page;
@@ -68,6 +69,7 @@ pub struct KilogApp {
     titles_epoch: u64,
     title_search: title_search::TitleSearch,
     achievements_page: achievements::AchievementPage,
+    auto: auto_unlock::AutoUnlock,
     spoof: spoofing::SpoofState,
 }
 
@@ -106,6 +108,7 @@ impl KilogApp {
             titles_epoch: 0,
             title_search: title_search::TitleSearch::new(),
             achievements_page: achievements::AchievementPage::new(),
+            auto: auto_unlock::AutoUnlock::new(),
             spoof: spoofing::SpoofState::new(),
         };
         match boot {
@@ -163,6 +166,7 @@ impl KilogApp {
         self.profile_error = None;
         self.xbox = None;
         self.clear_titles();
+        self.stop_auto_unlock();
         self.achievements_page.clear();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
@@ -195,6 +199,7 @@ impl KilogApp {
         self.games_filter = GameFilter::All;
         self.title_search.clear();
         self.achievements_page.clear();
+        self.stop_auto_unlock();
         self.stop_spoofing();
         if let Err(err) = crate::auth::clear_refresh_token() {
             tracing::error!(error = %err, "failed to clear refresh token");
@@ -400,6 +405,7 @@ impl eframe::App for KilogApp {
         self.poll_titles();
         self.poll_title_search(ctx.clone());
         self.poll_achievements();
+        self.poll_auto_unlock();
         self.poll_heartbeat();
         self.ensure_titles(ctx.clone());
     }

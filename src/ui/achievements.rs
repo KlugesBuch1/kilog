@@ -65,8 +65,8 @@ pub(super) struct AchievementPage {
     seen: String,
     searched: String,
     search_error: Option<String>,
-    selected: Option<Title>,
-    board: Option<TitleAchievements>,
+    pub(super) selected: Option<Title>,
+    pub(super) board: Option<TitleAchievements>,
     board_error: Option<String>,
     filter: AchievementFilter,
     list_query: String,
@@ -201,7 +201,10 @@ impl KilogApp {
             if enter || accent_button(ui, "Search").clicked() {
                 submit = true;
             }
+            self.draw_auto_toolbar(ui);
         });
+        self.draw_auto_status(ui);
+        self.draw_auto_windows(ui.ctx());
         ui.add_space(8.0);
 
         if self.achievements_page.query != self.achievements_page.seen {
@@ -284,6 +287,7 @@ impl KilogApp {
     }
 
     fn note_query_edited(&mut self) {
+        self.stop_auto_unlock();
         let query = self.achievements_page.query.clone();
         self.achievements_page.clear();
         self.achievements_page.query = query.clone();
@@ -463,7 +467,7 @@ impl KilogApp {
         }
     }
 
-    fn mark_unlocked(&mut self, id: &str) {
+    pub(super) fn mark_unlocked(&mut self, id: &str) {
         let Some(board) = &mut self.achievements_page.board else {
             return;
         };
@@ -562,6 +566,7 @@ impl KilogApp {
                 );
                 self.achievements_page.board = Some(board);
                 self.achievements_page.board_error = None;
+                self.load_saved_queue(title_id);
             }
             Err(err) => {
                 self.achievements_page.board = None;

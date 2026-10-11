@@ -26,7 +26,7 @@ struct SpoofArt {
 pub(super) struct SpoofState {
     title_id: String,
     live: bool,
-    error: Option<String>,
+    pub(super) error: Option<String>,
     active_title: Option<u64>,
     active_name: String,
     cover_url: Option<String>,
@@ -179,6 +179,11 @@ impl KilogApp {
             run.control.request_stop();
             self.spoof.retired.push(run.control);
         }
+    }
+
+    pub(super) fn begin_spoof(&mut self, ctx: egui::Context, title_id: u64) {
+        self.spoof.title_id = title_id.to_string();
+        self.start_heartbeat(ctx);
     }
 
     fn start_heartbeat(&mut self, ctx: egui::Context) {
