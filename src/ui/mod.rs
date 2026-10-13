@@ -371,6 +371,8 @@ impl KilogApp {
             self.settings_form(ui);
         } else if self.page == Page::Achievements {
             self.achievements_page(ui);
+        } else if self.page == Page::AutoUnlock {
+            self.auto_unlock_page(ui);
         } else if self.page == Page::Spoofing {
             self.spoofing_page(ui);
         } else {

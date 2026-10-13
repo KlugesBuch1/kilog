@@ -17,6 +17,7 @@ enum AutoNote {
 
 pub(super) struct AutoUnlock {
     pub reference_open: bool,
+    pub title_id: String,
     pub gamertag: String,
     pub delays_open: bool,
     pub queue: Option<UnlockQueue>,
@@ -34,6 +35,7 @@ impl AutoUnlock {
     pub(super) fn new() -> Self {
         Self {
             reference_open: false,
+            title_id: String::new(),
             gamertag: String::new(),
             delays_open: false,
             queue: None,
@@ -50,58 +52,21 @@ impl AutoUnlock {
 }
 
 impl KilogApp {
-    pub(super) fn draw_auto_toolbar(&mut self, ui: &mut egui::Ui) {
-        let current = self.current_title_id();
-        let queued = self
-            .auto
-            .queue
-            .as_ref()
-            .is_some_and(|queue| Some(queue.title_id) == current && !queue.entries.is_empty());
-        let pending = self
-            .auto
-            .queue
-            .as_ref()
-            .is_some_and(|queue| Some(queue.title_id) == current && queue.pending());
-        let ready = self.achievements_page.board.is_some() && current.is_some();
-        let mut reference = false;
-        let mut delays = false;
-        let mut start = false;
-        let mut stop = false;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if tool_button(ui, "Stop", self.auto.running).clicked() {
-                stop = true;
-            }
-            if tool_button(ui, "Start auto unlock", pending && !self.auto.running).clicked() {
-                start = true;
-            }
-            if tool_button(ui, "Edit delays", queued && !self.auto.running).clicked() {
-                delays = true;
-            }
-            if tool_button(
-                ui,
-                "Reference gamertag",
-                ready && !self.auto.running && !self.auto.fetching,
-            )
-            .clicked()
-            {
-                reference = true;
-            }
+    pub(super) fn auto_unlock_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let gap = 8.0;
+            let width = (ui.available_width() - gap) / 2.0;
+            super::theme::search_field(ui, &mut self.auto.title_id, "Title ID", width);
+            ui.add_space(gap);
+            super::theme::text_field(ui, &mut self.auto.gamertag, "Reference Gamertag", width);
         });
-        if stop {
-            self.stop_auto_unlock();
-        }
-        if delays {
-            self.auto.delays_open = true;
-        }
-        if reference {
-            self.auto.reference_open = true;
-            self.auto.error = None;
-        }
-        if start {
-            let ctx = ui.ctx().clone();
-            self.start_auto_unlock(ctx);
-        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let _ = tool_button(ui, "Build queue", true);
+            let _ = tool_button(ui, "Edit delays", true);
+            let _ = tool_button(ui, "Add Skips", true);
+        });
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {

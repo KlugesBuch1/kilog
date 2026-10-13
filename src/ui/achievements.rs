@@ -140,7 +140,7 @@ impl KilogApp {
         if self.achievements_page.unlocking.is_some() {
             ui.ctx().request_repaint();
         }
-        self.draw_achievement_search(ui);
+        self.draw_achievement_menu(ui);
         if let Some(action) = self.draw_achievement_body(ui) {
             let ctx = ui.ctx().clone();
             match action {
@@ -185,7 +185,7 @@ impl KilogApp {
         }
     }
 
-    fn draw_achievement_search(&mut self, ui: &mut egui::Ui) {
+    fn draw_achievement_menu(&mut self, ui: &mut egui::Ui) {
         if self.achievements_page.loading {
             ui.ctx().request_repaint();
         }
@@ -201,10 +201,12 @@ impl KilogApp {
             if enter || accent_button(ui, "Search").clicked() {
                 submit = true;
             }
-            self.draw_auto_toolbar(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if accent_button(ui, "Open Auto Unlock").clicked() {
+                    self.page = super::page::Page::AutoUnlock;
+                }
+            });
         });
-        self.draw_auto_status(ui);
-        self.draw_auto_windows(ui.ctx());
         ui.add_space(8.0);
 
         if self.achievements_page.query != self.achievements_page.seen {

@@ -20,7 +20,8 @@ pub(super) fn search_field(
     width: f32,
 ) -> egui::Response {
     let height = 40.0;
-    let icon = 16.0;
+    let icon_size = 16.0;
+    let text_width = width - 28.0 - icon_size - 12.0;
     egui::Frame::new()
         .fill(Color32::from_rgb(26, 28, 34))
         .stroke(Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
@@ -33,7 +34,7 @@ pub(super) fn search_field(
             ui.horizontal_centered(|ui| {
                 ui.add(
                     Lucide::Search
-                        .size(icon)
+                        .size(icon_size)
                         .color(MUTED)
                         .stroke_width(1.75)
                         .image(),
@@ -41,7 +42,42 @@ pub(super) fn search_field(
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .hint_text(hint)
-                        .desired_width(width - 28.0 - icon - 12.0)
+                        .desired_width(text_width)
+                        .frame(egui::Frame::NONE)
+                        .font(egui::FontId::proportional(15.0))
+                        .vertical_align(egui::Align::Center)
+                        .margin(egui::Margin::symmetric(4, 0))
+                        .min_size(egui::vec2(120.0, height)),
+                )
+            })
+            .inner
+        })
+        .inner
+}
+
+pub(super) fn text_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> egui::Response {
+    let height = 40.0;
+    let icon_size = 16.0;
+    let text_width = width - 28.0 - icon_size - 12.0;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(26, 28, 34))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(14, 0))
+        .show(ui, |ui| {
+            ui.set_width(width - 28.0);
+            ui.set_max_width(width - 28.0);
+            ui.set_max_height(height);
+            ui.horizontal_centered(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .hint_text(hint)
+                        .desired_width(text_width)
                         .frame(egui::Frame::NONE)
                         .font(egui::FontId::proportional(15.0))
                         .vertical_align(egui::Align::Center)
