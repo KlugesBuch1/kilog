@@ -18,11 +18,13 @@ pub struct QueueEntry {
     pub reference_unlocked_at: String,
     pub delay_seconds: u64,
     pub done: bool,
+    #[serde(default)]
+    pub skip: bool,
 }
 
 impl UnlockQueue {
     pub fn pending(&self) -> bool {
-        self.entries.iter().any(|entry| !entry.done)
+        self.entries.iter().any(|entry| !entry.done && !entry.skip)
     }
 }
 
@@ -86,6 +88,7 @@ pub fn build_queue(
             reference_unlocked_at: at.to_owned(),
             delay_seconds,
             done: false,
+            skip: false,
         });
     }
     UnlockQueue {

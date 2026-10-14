@@ -21,6 +21,8 @@ pub(super) struct AutoUnlock {
     pub gamertag: String,
     pub delays_open: bool,
     delay_draft: Option<UnlockQueue>,
+    skips_open: bool,
+    skip_draft: Option<UnlockQueue>,
     pub queue: Option<UnlockQueue>,
     pub error: Option<String>,
     pub fetching: bool,
@@ -40,6 +42,8 @@ impl AutoUnlock {
             gamertag: String::new(),
             delays_open: false,
             delay_draft: None,
+            skips_open: false,
+            skip_draft: None,
             queue: None,
             error: None,
             fetching: false,
@@ -65,6 +69,7 @@ impl KilogApp {
         ui.add_space(8.0);
         let mut build = false;
         let mut edit = false;
+        let mut skips = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if tool_button(ui, "Build queue", !self.auto.fetching).clicked() {
@@ -73,7 +78,9 @@ impl KilogApp {
             if tool_button(ui, "Edit delays", !self.auto.fetching).clicked() {
                 edit = true;
             }
-            let _ = tool_button(ui, "Add Skips", true);
+            if tool_button(ui, "Add Skips", !self.auto.fetching).clicked() {
+                skips = true;
+            }
         });
         if build {
             self.fetch_reference(ui.ctx().clone());
@@ -81,8 +88,12 @@ impl KilogApp {
         if edit {
             self.open_delay_editor();
         }
+        if skips {
+            self.open_skip_editor();
+        }
         self.draw_auto_status(ui);
         self.delays_window(ui.ctx());
+        self.skips_window(ui.ctx());
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {
@@ -319,6 +330,112 @@ impl KilogApp {
         }
     }
 
+    fn open_skip_editor(&mut self) {
+        match load_queue() {
+            Ok(Some(queue)) => {
+                self.auto.skip_draft = Some(queue);
+                self.auto.skips_open = true;
+                self.auto.error = None;
+            }
+            Ok(None) => self.auto.error = Some("No saved queue yet.".into()),
+            Err(err) => self.auto.error = Some(err.to_string()),
+        }
+    }
+
+    fn skips_window(&mut self, ctx: &egui::Context) {
+        if !self.auto.skips_open {
+            return;
+        }
+        let mut open = true;
+        let mut save = false;
+        let mut cancel = false;
+        egui::Window::new("Add skips")
+            .id(egui::Id::new("add-skips-edge"))
+            .open(&mut open)
+            .auto_sized()
+            .resizable(false)
+            .collapsible(false)
+            .frame(
+                egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin {
+                    left: 12,
+                    right: 0,
+                    top: 8,
+                    bottom: 8,
+                }),
+            )
+            .show(ctx, |ui| {
+                let Some(queue) = self.auto.skip_draft.as_mut() else {
+                    ui.label(egui::RichText::new("No queue yet.").size(14.0).color(MUTED));
+                    return;
+                };
+                {
+                    let scroll = &mut ui.style_mut().spacing.scroll;
+                    scroll.floating = false;
+                    scroll.bar_width = 8.0;
+                    scroll.bar_inner_margin = 0.0;
+                    scroll.bar_outer_margin = 0.0;
+                }
+                let font = egui::FontId::proportional(14.0);
+                let text_width = queue.entries.iter().enumerate().fold(0.0_f32, |widest, (index, entry)| {
+                    let label = format!("{}. {}", index + 1, entry.name);
+                    let width = ui.painter().layout_no_wrap(label, font.clone(), TEXT).size().x;
+                    widest.max(width)
+                });
+                let width = (text_width + 40.0).clamp(220.0, 560.0);
+                ui.set_min_width(width);
+                ui.set_max_width(width);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · Title {}",
+                        queue.gamertag, queue.title_id
+                    ))
+                    .size(13.0)
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                let list_height = (queue.entries.len().max(1) as f32 * 26.0).min(420.0);
+                egui::ScrollArea::vertical()
+                    .max_height(list_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (index, entry) in queue.entries.iter_mut().enumerate() {
+                            let label = format!("{}. {}", index + 1, entry.name);
+                            let _ = ui.checkbox(&mut entry.skip, label);
+                        }
+                    });
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if tool_button(ui, "Save", true).clicked() {
+                        save = true;
+                    }
+                    if tool_button(ui, "Cancel", true).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if save {
+            let Some(queue) = self.auto.skip_draft.clone() else {
+                self.auto.skips_open = false;
+                return;
+            };
+            if let Err(err) = save_queue(&queue) {
+                self.auto.error = Some(err.to_string());
+                return;
+            }
+            self.auto.queue = Some(queue);
+            self.auto.skip_draft = None;
+            self.auto.skips_open = false;
+            self.auto.error = None;
+            if !self.auto.running {
+                self.auto.status = Some("Saved skips.".into());
+            }
+        } else if cancel || !open {
+            self.auto.skip_draft = None;
+            self.auto.skips_open = false;
+        }
+    }
+
     fn fetch_reference(&mut self, ctx: egui::Context) {
         let gamertag = self.auto.gamertag.trim().to_owned();
         if self.auto.fetching {
@@ -527,7 +644,11 @@ async fn run_queue(
     notes: tokio::sync::mpsc::UnboundedSender<AutoNote>,
     ctx: egui::Context,
 ) {
-    for entry in queue.entries.into_iter().filter(|entry| !entry.done) {
+    for entry in queue
+        .entries
+        .into_iter()
+        .filter(|entry| !entry.done && !entry.skip)
+    {
         if *stop.borrow() {
             break;
         }
