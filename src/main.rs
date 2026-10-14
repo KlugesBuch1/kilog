@@ -1,3 +1,4 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 use clap::Parser;
 use eframe::egui;
 
