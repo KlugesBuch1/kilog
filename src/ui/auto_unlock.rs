@@ -61,17 +61,36 @@ impl KilogApp {
             super::theme::text_field(ui, &mut self.auto.gamertag, "Reference Gamertag", width);
         });
         ui.add_space(8.0);
+        let mut build = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let _ = tool_button(ui, "Build queue", true);
+            if tool_button(ui, "Build queue", !self.auto.fetching).clicked() {
+                build = true;
+            }
             let _ = tool_button(ui, "Edit delays", true);
             let _ = tool_button(ui, "Add Skips", true);
         });
+        if build {
+            self.fetch_reference(ui.ctx().clone());
+        }
+        self.draw_auto_status(ui);
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {
         if self.auto.running || self.auto.fetching {
             ui.ctx().request_repaint();
+        }
+        if self.auto.fetching {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new("Building queue…").size(13.0).color(MUTED));
+            });
+        } else if !self.auto.running
+            && let Some(status) = &self.auto.status
+        {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(status).size(13.0).color(MUTED));
         }
         if self.auto.running {
             ui.add_space(8.0);
@@ -264,15 +283,19 @@ impl KilogApp {
 
     fn fetch_reference(&mut self, ctx: egui::Context) {
         let gamertag = self.auto.gamertag.trim().to_owned();
-        if gamertag.is_empty() || self.auto.fetching {
+        if self.auto.fetching {
             return;
         }
-        let Some(title_id) = self.current_title_id() else {
-            self.auto.error = Some("Open a game first.".into());
+        if gamertag.is_empty() {
+            self.auto.error = Some("Enter a gamertag.".into());
+            return;
+        }
+        let Some(title_id) = parse_title_id(&self.auto.title_id) else {
+            self.auto.error = Some("Enter a Title ID.".into());
             return;
         };
-        let Some(local) = self.achievements_page.board.clone() else {
-            self.auto.error = Some("Achievements are not loaded.".into());
+        let Some(xuid) = self.signed_in_xuid() else {
+            self.auto.error = Some("Sign in on Home first.".into());
             return;
         };
         let Some(authorization) = self.xbox.as_ref().map(|xbox| xbox.authorization.clone()) else {
@@ -283,12 +306,20 @@ impl KilogApp {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.auto.fetching = true;
         self.auto.error = None;
+        self.auto.status = None;
         self.auto.fetch_rx = Some(rx);
         self.runtime.spawn(async move {
             let result = async {
-                let xuid =
+                let reference_xuid =
                     crate::xbox::profile::xuid_for_gamertag(&authorization, &gamertag).await?;
                 let reference = crate::xbox::achievements::fetch_title_achievements(
+                    &authorization,
+                    &reference_xuid,
+                    title_id,
+                    &language,
+                )
+                .await?;
+                let local = crate::xbox::achievements::fetch_title_achievements(
                     &authorization,
                     &xuid,
                     title_id,
@@ -324,15 +355,19 @@ impl KilogApp {
         };
         self.auto.fetch_rx = None;
         self.auto.fetching = false;
-        if self.current_title_id() != Some(title_id) {
+        if parse_title_id(&self.auto.title_id) != Some(title_id) {
             return;
         }
         match result {
             Ok(queue) => {
+                let count = queue.entries.len();
                 self.auto.gamertag = queue.gamertag.clone();
                 self.auto.queue = Some(queue);
                 self.auto.error = None;
                 self.auto.reference_open = false;
+                if !self.auto.running {
+                    self.auto.status = Some(format!("Saved {count} unlocks to queue.json"));
+                }
             }
             Err(err) => self.auto.error = Some(err),
         }
