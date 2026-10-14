@@ -139,11 +139,36 @@ impl KilogApp {
         if skips {
             self.open_skip_editor();
         }
+        self.draw_queue_total(ui);
         self.draw_auto_status(ui);
         self.ensure_saved_queue();
         self.draw_queue_and_bar(ui);
         self.delays_window(ui.ctx());
         self.skips_window(ui.ctx());
+    }
+
+    fn draw_queue_total(&mut self, ui: &mut egui::Ui) {
+        if self.config.use_randomized_delays {
+            self.fill_missing_rolls();
+        }
+        let Some(entries) = self.auto.queue.as_ref().map(|queue| &queue.entries) else {
+            return;
+        };
+        if entries.is_empty() {
+            return;
+        }
+        let total = scheduled_seconds(entries);
+        let text = if self.config.use_randomized_delays {
+            format!(
+                "Total {}    randomized to {}",
+                format_hms(total),
+                format_hms(randomized_seconds(entries))
+            )
+        } else {
+            format!("Total {}", format_hms(total))
+        };
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new(text).size(14.0).color(TEXT).monospace());
     }
 
     fn draw_queue_and_bar(&mut self, ui: &mut egui::Ui) {
@@ -478,6 +503,16 @@ impl KilogApp {
                     egui::RichText::new(format!("{} · Title {}", queue.gamertag, queue.title_id))
                         .size(13.0)
                         .color(MUTED),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Total {}",
+                        format_hms(scheduled_seconds(&queue.entries))
+                    ))
+                    .size(14.0)
+                    .color(TEXT)
+                    .monospace(),
                 );
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
@@ -1168,6 +1203,22 @@ fn queue_row(
             time_color,
         );
     }
+}
+
+fn scheduled_seconds(entries: &[crate::xbox::queue::QueueEntry]) -> u64 {
+    entries
+        .iter()
+        .filter(|entry| !entry.skip)
+        .fold(0, |sum, entry| sum.saturating_add(entry.delay_seconds))
+}
+
+fn randomized_seconds(entries: &[crate::xbox::queue::QueueEntry]) -> u64 {
+    entries
+        .iter()
+        .filter(|entry| !entry.skip)
+        .fold(0, |sum, entry| {
+            sum.saturating_add(entry.rolled_delay.unwrap_or(entry.delay_seconds))
+        })
 }
 
 fn format_hms(total_seconds: u64) -> String {
