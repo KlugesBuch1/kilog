@@ -28,6 +28,8 @@ pub(super) struct AutoUnlock {
     pub fetching: bool,
     fetch_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<UnlockQueue, String>)>>,
     pub running: bool,
+    pub stop_on_spoof_fail: bool,
+    spoof_halted: bool,
     stop: Option<tokio::sync::watch::Sender<bool>>,
     task: Option<tokio::task::JoinHandle<()>>,
     notes: Option<tokio::sync::mpsc::UnboundedReceiver<AutoNote>>,
@@ -49,6 +51,8 @@ impl AutoUnlock {
             fetching: false,
             fetch_rx: None,
             running: false,
+            stop_on_spoof_fail: false,
+            spoof_halted: false,
             stop: None,
             task: None,
             notes: None,
@@ -81,6 +85,14 @@ impl KilogApp {
             if tool_button(ui, "Add Skips", !self.auto.fetching).clicked() {
                 skips = true;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(
+                    &mut self.auto.stop_on_spoof_fail,
+                    egui::RichText::new("Stop unlocking when spoofing fails")
+                        .size(13.0)
+                        .color(TEXT),
+                );
+            });
         });
         if build {
             self.fetch_reference(ui.ctx().clone());
@@ -280,6 +292,15 @@ impl KilogApp {
             }
             Err(err) => self.auto.error = Some(err.to_string()),
         }
+    }
+
+    pub(super) fn halt_unlock_for_spoof(&mut self) {
+        if !self.auto.stop_on_spoof_fail || !self.auto.running {
+            return;
+        }
+        self.auto.spoof_halted = true;
+        self.stop_auto_unlock();
+        self.auto.error = Some("Unlocking stopped because spoofing failed.".into());
     }
 
     pub(super) fn stop_auto_unlock(&mut self) {
@@ -669,6 +690,7 @@ impl KilogApp {
         self.auto.stop = Some(stop_tx);
         self.auto.notes = Some(note_rx);
         self.auto.running = true;
+        self.auto.spoof_halted = false;
         self.auto.error = None;
         self.auto.status = Some("Spoofing this game.".into());
         self.auto.task = Some(self.runtime.spawn(async move {
@@ -754,7 +776,10 @@ impl KilogApp {
             AutoNote::Finished => {
                 self.auto.running = false;
                 self.auto.status = None;
-                self.auto.error = None;
+                if !self.auto.spoof_halted {
+                    self.auto.error = None;
+                }
+                self.auto.spoof_halted = false;
             }
         }
     }

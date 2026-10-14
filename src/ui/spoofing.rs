@@ -124,6 +124,7 @@ impl KilogApp {
         if self.spoof.live && self.signed_in_xuid().is_none() {
             self.halt_heartbeat();
             self.spoof.error = Some("Authentication lost. Heartbeat stopped.".into());
+            self.halt_unlock_for_spoof();
         }
 
         let mut failed: Option<String> = None;
@@ -161,6 +162,7 @@ impl KilogApp {
         if let Some(message) = failed {
             self.halt_heartbeat();
             self.spoof.error = Some(message);
+            self.halt_unlock_for_spoof();
         }
     }
 
