@@ -25,12 +25,13 @@ struct SpoofArt {
 
 pub(super) struct SpoofState {
     title_id: String,
-    live: bool,
+    pub(super) live: bool,
     pub(super) error: Option<String>,
     active_title: Option<u64>,
     active_name: String,
     cover_url: Option<String>,
-    started_at: Option<Instant>,
+    pub(super) started_at: Option<Instant>,
+    pub(super) code: Option<u16>,
     played: PlayedSnapshot,
     run: Option<HeartbeatRun>,
     retired: Vec<HeartbeatControl>,
@@ -52,6 +53,7 @@ impl SpoofState {
             active_name: String::new(),
             cover_url: None,
             started_at: None,
+            code: None,
             played: PlayedSnapshot::Unknown,
             run: None,
             retired: Vec::new(),
@@ -221,6 +223,7 @@ impl KilogApp {
             return;
         }
         self.halt_heartbeat();
+        self.spoof.code = None;
         let wake_ctx = ctx.clone();
         let control = spawn_heartbeat(
             &runtime,
@@ -308,13 +311,17 @@ impl KilogApp {
         failed: &mut Option<String>,
     ) {
         match note {
-            HeartbeatNote::Sent => {
+            HeartbeatNote::Sent { code } => {
                 if self.spoof.live && from_live {
                     self.spoof.error = None;
+                    self.spoof.code = Some(code);
                 }
             }
-            HeartbeatNote::Stopped { message } => {
+            HeartbeatNote::Stopped { code, message } => {
                 if from_live && self.spoof.live {
+                    if let Some(code) = code {
+                        self.spoof.code = Some(code);
+                    }
                     *failed = Some(message);
                 }
             }

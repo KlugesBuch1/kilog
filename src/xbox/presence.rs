@@ -12,8 +12,8 @@ pub struct HeartbeatSession {
 }
 
 pub enum HeartbeatNote {
-    Sent,
-    Stopped { message: String },
+    Sent { code: u16 },
+    Stopped { code: Option<u16>, message: String },
 }
 
 pub struct HeartbeatControl {
@@ -66,6 +66,7 @@ pub fn spawn_heartbeat(
                     &notes,
                     &wake,
                     HeartbeatNote::Stopped {
+                        code: None,
                         message: err.to_string(),
                     },
                 );
@@ -78,8 +79,8 @@ pub fn spawn_heartbeat(
                 break;
             }
             match beat_once(&client, &mut session).await {
-                Ok(()) => {
-                    emit(&notes, &wake, HeartbeatNote::Sent);
+                Ok(code) => {
+                    emit(&notes, &wake, HeartbeatNote::Sent { code });
                     if *stop_rx.borrow() {
                         break;
                     }
@@ -88,9 +89,16 @@ pub fn spawn_heartbeat(
                         _ = stop_rx.changed() => {}
                     }
                 }
-                Err(message) => {
-                    tracing::warn!(error = %message, "presence heartbeat stopped");
-                    emit(&notes, &wake, HeartbeatNote::Stopped { message });
+                Err(err) => {
+                    tracing::warn!(error = %err, "presence heartbeat stopped");
+                    emit(
+                        &notes,
+                        &wake,
+                        HeartbeatNote::Stopped {
+                            code: err.code(),
+                            message: err.to_string(),
+                        },
+                    );
                     break;
                 }
             }
@@ -113,30 +121,35 @@ fn emit(
     wake();
 }
 
-async fn beat_once(client: &reqwest::Client, session: &mut HeartbeatSession) -> Result<(), String> {
+async fn beat_once(
+    client: &reqwest::Client,
+    session: &mut HeartbeatSession,
+) -> Result<u16, HeartbeatError> {
     let mut last = None;
     for try_index in 0..2 {
         if session.authorization.trim().is_empty() {
-            session.authorization = load_app_authorization().await?;
+            session.authorization = load_app_authorization()
+                .await
+                .map_err(HeartbeatError::Transport)?;
         }
         match post_heartbeat(client, session).await {
-            Ok(()) => return Ok(()),
+            Ok(code) => return Ok(code),
             Err(err) if err.is_auth() => {
                 session.authorization.clear();
-                last = Some(err.to_string());
                 if try_index == 1 {
-                    return Err(last.unwrap());
+                    return Err(err);
                 }
+                last = Some(err);
             }
             Err(err) => {
-                last = Some(err.to_string());
                 if try_index == 1 {
-                    return Err(last.unwrap());
+                    return Err(err);
                 }
+                last = Some(err);
             }
         }
     }
-    Err(last.unwrap_or_else(|| "heartbeat failed".into()))
+    Err(last.unwrap_or_else(|| HeartbeatError::Transport("heartbeat failed".into())))
 }
 
 async fn load_app_authorization() -> Result<String, String> {
@@ -160,13 +173,19 @@ pub(crate) fn heartbeat_body(session: &HeartbeatSession) -> serde_json::Value {
 async fn post_heartbeat(
     client: &reqwest::Client,
     session: &HeartbeatSession,
-) -> Result<(), HeartbeatError> {
+) -> Result<u16, HeartbeatError> {
     let xuid = session.xuid.trim();
     if xuid.is_empty() {
-        return Err(HeartbeatError::Rejected("xuid is empty".into()));
+        return Err(HeartbeatError::Rejected {
+            code: None,
+            message: "xuid is empty".into(),
+        });
     }
     let body = serde_json::to_string(&heartbeat_body(session))
-        .map_err(|err| HeartbeatError::Rejected(format!("heartbeat body failed: {err}")))?;
+        .map_err(|err| HeartbeatError::Rejected {
+            code: None,
+            message: format!("heartbeat body failed: {err}"),
+        })?;
     let response = client
         .post(heartbeat_url(xuid))
         .header("Authorization", session.authorization.as_str())
@@ -187,32 +206,45 @@ async fn post_heartbeat(
         } else {
             format!("heartbeat returned {}: {snippet}", status.as_u16())
         };
-        if status.as_u16() == 401 || status.as_u16() == 403 {
-            return Err(HeartbeatError::Auth(message));
+        let code = status.as_u16();
+        if code == 401 || code == 403 {
+            return Err(HeartbeatError::Auth { code, message });
         }
-        return Err(HeartbeatError::Rejected(message));
+        return Err(HeartbeatError::Rejected {
+            code: Some(code),
+            message,
+        });
     }
     tracing::debug!(title_id = session.title_id, "presence heartbeat ok");
-    Ok(())
+    Ok(status.as_u16())
 }
 
 enum HeartbeatError {
-    Auth(String),
-    Rejected(String),
+    Auth { code: u16, message: String },
+    Rejected { code: Option<u16>, message: String },
     Transport(String),
 }
 
 impl HeartbeatError {
     fn is_auth(&self) -> bool {
-        matches!(self, Self::Auth(_))
+        matches!(self, Self::Auth { .. })
+    }
+
+    fn code(&self) -> Option<u16> {
+        match self {
+            Self::Auth { code, .. } => Some(*code),
+            Self::Rejected { code, .. } => *code,
+            Self::Transport(_) => None,
+        }
     }
 }
 
 impl std::fmt::Display for HeartbeatError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(message) => formatter.write_str(message),
-            Self::Rejected(message) | Self::Transport(message) => formatter.write_str(message),
+            Self::Auth { message, .. } | Self::Rejected { message, .. } | Self::Transport(message) => {
+                formatter.write_str(message)
+            }
         }
     }
 }

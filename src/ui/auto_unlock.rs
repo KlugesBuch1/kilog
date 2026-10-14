@@ -93,9 +93,66 @@ impl KilogApp {
         }
         self.draw_auto_status(ui);
         self.ensure_saved_queue();
-        self.draw_queue_list(ui);
+        self.draw_queue_and_bar(ui);
         self.delays_window(ui.ctx());
         self.skips_window(ui.ctx());
+    }
+
+    fn draw_queue_and_bar(&mut self, ui: &mut egui::Ui) {
+        if self.spoof.live {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        let width = ui.available_width();
+        let list_h = (ui.available_height() - 52.0).max(0.0);
+        ui.allocate_ui(egui::vec2(width, list_h), |ui| {
+            self.draw_queue_list(ui, width);
+        });
+        ui.add_space(8.0);
+        let mut start = false;
+        let mut stop = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if tool_button(ui, "Start unlock", !self.auto.running && !self.auto.fetching).clicked()
+            {
+                start = true;
+            }
+            if tool_button(ui, "Stop unlock", self.auto.running || self.spoof.live).clicked() {
+                stop = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let color = match self.spoof.code {
+                    Some(code) if (200..300).contains(&code) => TEXT,
+                    Some(_) => ERROR,
+                    None => MUTED,
+                };
+                ui.label(
+                    egui::RichText::new(self.spoof_status_line())
+                        .size(14.0)
+                        .color(color)
+                        .monospace(),
+                );
+            });
+        });
+        if start {
+            self.start_auto_unlock(ui.ctx().clone());
+        }
+        if stop {
+            self.stop_auto_unlock();
+            self.stop_spoofing();
+        }
+    }
+
+    fn spoof_status_line(&self) -> String {
+        let clock = self
+            .spoof
+            .started_at
+            .map(|started| format_hms(started.elapsed().as_secs()))
+            .unwrap_or_else(|| "00:00:00".to_owned());
+        match self.spoof.code {
+            Some(code) => format!("Spoofing for: {clock} ({code})"),
+            None => format!("Spoofing not yet started."),
+        }
     }
 
     fn ensure_saved_queue(&mut self) {
@@ -107,7 +164,7 @@ impl KilogApp {
         }
     }
 
-    fn draw_queue_list(&mut self, ui: &mut egui::Ui) {
+    fn draw_queue_list(&mut self, ui: &mut egui::Ui, width: f32) {
         let Some(entries) = self
             .auto
             .queue
@@ -124,6 +181,8 @@ impl KilogApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let row_w = ui.available_width();
+                let row_w = if row_w.is_finite() { row_w } else { width };
                 for entry in &entries {
                     let time = if entry.skip {
                         "Skipped".to_owned()
@@ -131,7 +190,7 @@ impl KilogApp {
                         elapsed = elapsed.saturating_add(entry.delay_seconds);
                         format_hms(elapsed)
                     };
-                    queue_row(ui, &entry.name, &time, entry.skip, entry.done);
+                    queue_row(ui, row_w, &entry.name, &time, entry.skip, entry.done);
                     ui.add_space(8.0);
                 }
             });
@@ -574,21 +633,20 @@ impl KilogApp {
             return;
         }
         let Some(queue) = self.auto.queue.clone() else {
+            self.auto.error = Some("Build a queue first.".into());
             return;
         };
-        if self.current_title_id() != Some(queue.title_id) || !queue.pending() {
+        if !queue.pending() {
+            self.auto.error = Some("Nothing left to unlock.".into());
             return;
         }
-        let Some(service_config_id) = self
+        let service_config_id = self
             .achievements_page
             .board
             .as_ref()
+            .filter(|_| self.current_title_id() == Some(queue.title_id))
             .and_then(|board| board.service_config_id.clone())
-            .filter(|id| !id.trim().is_empty())
-        else {
-            self.auto.error = Some("This title has no service config id.".into());
-            return;
-        };
+            .filter(|id| !id.trim().is_empty());
         let Some(xuid) = self.signed_in_xuid() else {
             self.auto.error = Some("Sign in on Home to unlock achievements.".into());
             return;
@@ -597,6 +655,7 @@ impl KilogApp {
             self.auto.error = Some("Xbox authorization is not ready.".into());
             return;
         };
+        let language = crate::xbox::titles::accept_language(self.config.force_region);
         self.begin_spoof(ctx.clone(), queue.title_id);
         if let Some(task) = self.auto.task.take() {
             task.abort();
@@ -609,6 +668,42 @@ impl KilogApp {
         self.auto.error = None;
         self.auto.status = Some("Spoofing this game.".into());
         self.auto.task = Some(self.runtime.spawn(async move {
+            let service_config_id = match service_config_id {
+                Some(id) => id,
+                None => {
+                    match crate::xbox::achievements::fetch_title_achievements(
+                        &authorization,
+                        &xuid,
+                        queue.title_id,
+                        &language,
+                    )
+                    .await
+                    {
+                        Ok(board) => match board
+                            .service_config_id
+                            .filter(|id| !id.trim().is_empty())
+                        {
+                            Some(id) => id,
+                            None => {
+                                let _ = note_tx.send(AutoNote::Failed {
+                                    id: String::new(),
+                                    message: "This title has no service config id.".into(),
+                                });
+                                ctx.request_repaint();
+                                return;
+                            }
+                        },
+                        Err(err) => {
+                            let _ = note_tx.send(AutoNote::Failed {
+                                id: String::new(),
+                                message: err.to_string(),
+                            });
+                            ctx.request_repaint();
+                            return;
+                        }
+                    }
+                }
+            };
             run_queue(
                 queue,
                 authorization,
@@ -759,8 +854,7 @@ async fn run_queue(
     ctx.request_repaint();
 }
 
-fn queue_row(ui: &mut egui::Ui, name: &str, time: &str, skip: bool, done: bool) {
-    let width = ui.available_width();
+fn queue_row(ui: &mut egui::Ui, width: f32, name: &str, time: &str, skip: bool, done: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
     let (fill, name_color, time_color) = if done {
         (
