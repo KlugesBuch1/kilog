@@ -125,8 +125,13 @@ impl KilogApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for entry in &entries {
-                    elapsed = elapsed.saturating_add(entry.delay_seconds);
-                    queue_row(ui, &entry.name, &format_hms(elapsed), entry.skip, entry.done);
+                    let time = if entry.skip {
+                        "Skipped".to_owned()
+                    } else {
+                        elapsed = elapsed.saturating_add(entry.delay_seconds);
+                        format_hms(elapsed)
+                    };
+                    queue_row(ui, &entry.name, &time, entry.skip, entry.done);
                     ui.add_space(8.0);
                 }
             });
