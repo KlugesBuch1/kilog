@@ -92,8 +92,44 @@ impl KilogApp {
             self.open_skip_editor();
         }
         self.draw_auto_status(ui);
+        self.ensure_saved_queue();
+        self.draw_queue_list(ui);
         self.delays_window(ui.ctx());
         self.skips_window(ui.ctx());
+    }
+
+    fn ensure_saved_queue(&mut self) {
+        if self.auto.queue.is_some() {
+            return;
+        }
+        if let Ok(Some(queue)) = load_queue() {
+            self.auto.queue = Some(queue);
+        }
+    }
+
+    fn draw_queue_list(&mut self, ui: &mut egui::Ui) {
+        let Some(entries) = self
+            .auto
+            .queue
+            .as_ref()
+            .map(|queue| queue.entries.clone())
+        else {
+            return;
+        };
+        if entries.is_empty() {
+            return;
+        }
+        ui.add_space(16.0);
+        let mut elapsed = 0_u64;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for entry in &entries {
+                    elapsed = elapsed.saturating_add(entry.delay_seconds);
+                    queue_row(ui, &entry.name, &format_hms(elapsed), entry.skip, entry.done);
+                    ui.add_space(8.0);
+                }
+            });
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {
@@ -716,6 +752,81 @@ async fn run_queue(
     }
     let _ = notes.send(AutoNote::Finished);
     ctx.request_repaint();
+}
+
+fn queue_row(ui: &mut egui::Ui, name: &str, time: &str, skip: bool, done: bool) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
+    let (fill, name_color, time_color) = if done {
+        (
+            Color32::from_rgb(24, 52, 36),
+            Color32::from_rgb(146, 220, 164),
+            Color32::from_rgb(146, 220, 164),
+        )
+    } else if skip {
+        (
+            Color32::from_rgb(22, 23, 27),
+            MUTED,
+            MUTED,
+        )
+    } else {
+        (Color32::from_rgb(26, 28, 34), TEXT, TEXT)
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(10), fill);
+    if done {
+        let bar = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(0.0, 10.0),
+            egui::pos2(rect.left() + 3.0, rect.bottom() - 10.0),
+        );
+        ui.painter().rect_filled(
+            bar,
+            egui::CornerRadius::same(2),
+            Color32::from_rgb(72, 168, 104),
+        );
+    }
+    let inner = rect.shrink2(egui::vec2(16.0, 0.0));
+    let time_galley = ui.painter().layout_no_wrap(
+        time.to_owned(),
+        egui::FontId::monospace(14.0),
+        time_color,
+    );
+    let name_width = (inner.width() - time_galley.size().x - 16.0).max(24.0);
+    let mut name_job = egui::text::LayoutJob::single_section(
+        name.replace(['\n', '\r'], " "),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(14.5),
+            color: name_color,
+            ..Default::default()
+        },
+    );
+    name_job.wrap.max_width = name_width;
+    name_job.wrap.max_rows = 1;
+    name_job.wrap.break_anywhere = true;
+    let name_galley = ui.painter().layout_job(name_job);
+    ui.painter().galley(
+        egui::pos2(
+            inner.left(),
+            inner.center().y - name_galley.size().y / 2.0,
+        ),
+        name_galley,
+        name_color,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            inner.right() - time_galley.size().x,
+            inner.center().y - time_galley.size().y / 2.0,
+        ),
+        time_galley,
+        time_color,
+    );
+}
+
+fn format_hms(total_seconds: u64) -> String {
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 fn tool_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
