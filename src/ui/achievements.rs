@@ -203,6 +203,16 @@ impl KilogApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if accent_button(ui, "Open Auto Unlock").clicked() {
+                    let id = self
+                        .achievements_page
+                        .selected
+                        .as_ref()
+                        .and_then(|title| title.title_id.clone())
+                        .filter(|id| !id.is_empty())
+                        .unwrap_or_else(|| self.achievements_page.query.trim().to_owned());
+                    if !id.is_empty() {
+                        self.auto.title_id = id;
+                    }
                     self.page = super::page::Page::AutoUnlock;
                 }
             });
