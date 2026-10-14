@@ -158,15 +158,19 @@ impl KilogApp {
             return;
         }
         let total = scheduled_seconds(entries);
+        let run = pending_seconds(entries, self.config.use_randomized_delays);
         let text = if self.config.use_randomized_delays {
             format!(
-                "Total {}    randomized to {}",
+                "Total {}    randomized to {}    {}",
                 format_hms(total),
-                format_hms(randomized_seconds(entries))
+                format_hms(randomized_seconds(entries)),
+                finish_stamp(run)
             )
         } else {
-            format!("Total {}", format_hms(total))
+            format!("Total {}    {}", format_hms(total), finish_stamp(run))
         };
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
         ui.add_space(10.0);
         ui.label(egui::RichText::new(text).size(14.0).color(TEXT).monospace());
     }
@@ -505,10 +509,15 @@ impl KilogApp {
                         .color(MUTED),
                 );
                 ui.add_space(4.0);
+                let edited = scheduled_seconds(&queue.entries);
+                let run = pending_seconds(&queue.entries, false);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(1));
                 ui.label(
                     egui::RichText::new(format!(
-                        "Total {}",
-                        format_hms(scheduled_seconds(&queue.entries))
+                        "Total {}    {}",
+                        format_hms(edited),
+                        finish_stamp(run)
                     ))
                     .size(14.0)
                     .color(TEXT)
@@ -1212,6 +1221,22 @@ fn scheduled_seconds(entries: &[crate::xbox::queue::QueueEntry]) -> u64 {
         .fold(0, |sum, entry| sum.saturating_add(entry.delay_seconds))
 }
 
+fn pending_seconds(entries: &[crate::xbox::queue::QueueEntry], randomized: bool) -> u64 {
+    entries
+        .iter()
+        .filter(|entry| !entry.skip && !entry.done)
+        .fold(0, |sum, entry| {
+            let wait = if let Some(left) = entry.remaining_seconds {
+                left
+            } else if randomized {
+                entry.rolled_delay.unwrap_or(entry.delay_seconds)
+            } else {
+                entry.delay_seconds
+            };
+            sum.saturating_add(wait)
+        })
+}
+
 fn randomized_seconds(entries: &[crate::xbox::queue::QueueEntry]) -> u64 {
     entries
         .iter()
@@ -1219,6 +1244,59 @@ fn randomized_seconds(entries: &[crate::xbox::queue::QueueEntry]) -> u64 {
         .fold(0, |sum, entry| {
             sum.saturating_add(entry.rolled_delay.unwrap_or(entry.delay_seconds))
         })
+}
+
+fn finish_stamp(after_seconds: u64) -> String {
+    let Some((month, day, hour, minute, _)) = local_after(after_seconds) else {
+        return String::new();
+    };
+    let clock = format!("{hour:02}:{minute:02}");
+    if after_seconds > 24 * 3600 {
+        format!("Done @ {day}. {} {clock}", month_name(month))
+    } else {
+        format!("Done @ {clock}")
+    }
+}
+
+fn month_name(month: u16) -> &'static str {
+    match month {
+        1 => "Jan.",
+        2 => "Feb.",
+        3 => "Mar.",
+        4 => "Apr.",
+        5 => "May",
+        6 => "Jun.",
+        7 => "Jul.",
+        8 => "Aug.",
+        9 => "Sep.",
+        10 => "Oct.",
+        11 => "Nov.",
+        _ => "Dec.",
+    }
+}
+
+fn local_after(seconds: u64) -> Option<(u16, u16, u16, u16, u16)> {
+    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToFileTime};
+    unsafe {
+        let local = GetLocalTime();
+        let mut file = FILETIME::default();
+        SystemTimeToFileTime(&local, &mut file).ok()?;
+        let ticks = u64::from(file.dwLowDateTime) | (u64::from(file.dwHighDateTime) << 32);
+        let ticks = ticks.saturating_add(seconds.saturating_mul(10_000_000));
+        file.dwLowDateTime = ticks as u32;
+        file.dwHighDateTime = (ticks >> 32) as u32;
+        let mut done = SYSTEMTIME::default();
+        FileTimeToSystemTime(&file, &mut done).ok()?;
+        Some((
+            done.wMonth,
+            done.wDay,
+            done.wHour,
+            done.wMinute,
+            done.wSecond,
+        ))
+    }
 }
 
 fn format_hms(total_seconds: u64) -> String {
