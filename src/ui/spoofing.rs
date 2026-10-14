@@ -189,6 +189,9 @@ impl KilogApp {
     }
 
     fn start_heartbeat(&mut self, ctx: egui::Context) {
+        if self.spoof.live {
+            return;
+        }
         if let Some(reason) = self.spoof_block_reason() {
             self.halt_heartbeat();
             self.spoof.error = Some(reason.to_owned());

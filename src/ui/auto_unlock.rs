@@ -124,6 +124,7 @@ impl KilogApp {
                 let color = match self.spoof.code {
                     Some(code) if (200..300).contains(&code) => TEXT,
                     Some(_) => ERROR,
+                    None if self.spoof.live => TEXT,
                     None => MUTED,
                 };
                 ui.label(
@@ -144,6 +145,9 @@ impl KilogApp {
     }
 
     fn spoof_status_line(&self) -> String {
+        if !self.spoof.live {
+            return "Spoofing not yet started.".into();
+        }
         let clock = self
             .spoof
             .started_at
@@ -151,7 +155,7 @@ impl KilogApp {
             .unwrap_or_else(|| "00:00:00".to_owned());
         match self.spoof.code {
             Some(code) => format!("Spoofing for: {clock} ({code})"),
-            None => format!("Spoofing not yet started."),
+            None => format!("Spoofing for: {clock}"),
         }
     }
 
