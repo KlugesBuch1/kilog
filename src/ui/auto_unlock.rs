@@ -20,6 +20,7 @@ pub(super) struct AutoUnlock {
     pub title_id: String,
     pub gamertag: String,
     pub delays_open: bool,
+    delay_draft: Option<UnlockQueue>,
     pub queue: Option<UnlockQueue>,
     pub error: Option<String>,
     pub fetching: bool,
@@ -38,6 +39,7 @@ impl AutoUnlock {
             title_id: String::new(),
             gamertag: String::new(),
             delays_open: false,
+            delay_draft: None,
             queue: None,
             error: None,
             fetching: false,
@@ -62,18 +64,25 @@ impl KilogApp {
         });
         ui.add_space(8.0);
         let mut build = false;
+        let mut edit = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if tool_button(ui, "Build queue", !self.auto.fetching).clicked() {
                 build = true;
             }
-            let _ = tool_button(ui, "Edit delays", true);
+            if tool_button(ui, "Edit delays", !self.auto.fetching).clicked() {
+                edit = true;
+            }
             let _ = tool_button(ui, "Add Skips", true);
         });
         if build {
             self.fetch_reference(ui.ctx().clone());
         }
+        if edit {
+            self.open_delay_editor();
+        }
         self.draw_auto_status(ui);
+        self.delays_window(ui.ctx());
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {
@@ -212,40 +221,52 @@ impl KilogApp {
         }
     }
 
+    fn open_delay_editor(&mut self) {
+        match load_queue() {
+            Ok(Some(queue)) => {
+                self.auto.delay_draft = Some(queue);
+                self.auto.delays_open = true;
+                self.auto.error = None;
+            }
+            Ok(None) => self.auto.error = Some("No saved queue yet.".into()),
+            Err(err) => self.auto.error = Some(err.to_string()),
+        }
+    }
+
     fn delays_window(&mut self, ctx: &egui::Context) {
         if !self.auto.delays_open {
             return;
         }
         let mut open = true;
-        let mut queue = self.auto.queue.clone();
-        let mut changed = false;
+        let mut save = false;
+        let mut cancel = false;
         egui::Window::new("Edit delays")
             .open(&mut open)
             .default_width(520.0)
             .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Seconds to wait before each unlock.")
-                        .size(13.0)
-                        .color(MUTED),
-                );
-                ui.add_space(8.0);
-                let Some(queue) = queue.as_mut() else {
+                let Some(queue) = self.auto.delay_draft.as_mut() else {
                     ui.label(egui::RichText::new("No queue yet.").size(14.0).color(MUTED));
                     return;
                 };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · Title {}",
+                        queue.gamertag, queue.title_id
+                    ))
+                    .size(13.0)
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                    for entry in &mut queue.entries {
-                        if entry.done {
-                            continue;
-                        }
+                    for (index, entry) in queue.entries.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
                             ui.set_min_width(480.0);
-                            ui.label(
-                                egui::RichText::new(&entry.name)
-                                    .size(14.0)
-                                    .color(TEXT)
-                                    .strong(),
-                            );
+                            let name = if entry.done {
+                                format!("{}. {} · done", index + 1, entry.name)
+                            } else {
+                                format!("{}. {}", index + 1, entry.name)
+                            };
+                            ui.label(egui::RichText::new(name).size(14.0).color(TEXT).strong());
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -258,27 +279,44 @@ impl KilogApp {
                                         && let Ok(value) = seconds.trim().parse::<u64>()
                                     {
                                         entry.delay_seconds = value;
-                                        changed = true;
                                     }
                                 },
                             );
                         });
-                        ui.label(
-                            egui::RichText::new(&entry.reference_unlocked_at)
-                                .size(11.0)
-                                .color(MUTED),
-                        );
                         ui.add_space(6.0);
                     }
                 });
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if tool_button(ui, "Save", true).clicked() {
+                        save = true;
+                    }
+                    if tool_button(ui, "Cancel", true).clicked() {
+                        cancel = true;
+                    }
+                });
             });
-        if changed && let Some(queue) = queue {
-            self.auto.queue = Some(queue);
-            if let Err(err) = self.persist_queue() {
-                self.auto.error = Some(err);
+        if save {
+            let Some(queue) = self.auto.delay_draft.clone() else {
+                self.auto.delays_open = false;
+                return;
+            };
+            if let Err(err) = save_queue(&queue) {
+                self.auto.error = Some(err.to_string());
+                return;
             }
+            self.auto.queue = Some(queue);
+            self.auto.delay_draft = None;
+            self.auto.delays_open = false;
+            self.auto.error = None;
+            if !self.auto.running {
+                self.auto.status = Some("Saved delays.".into());
+            }
+        } else if cancel || !open {
+            self.auto.delay_draft = None;
+            self.auto.delays_open = false;
         }
-        self.auto.delays_open = open;
     }
 
     fn fetch_reference(&mut self, ctx: egui::Context) {
