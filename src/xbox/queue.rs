@@ -20,6 +20,9 @@ pub struct QueueEntry {
     pub done: bool,
     #[serde(default)]
     pub skip: bool,
+    /// Delay rolled for this entry. Not saved; the queue order stays the original one.
+    #[serde(skip)]
+    pub rolled_delay: Option<u64>,
 }
 
 impl UnlockQueue {
@@ -89,6 +92,7 @@ pub fn build_queue(
             delay_seconds,
             done: false,
             skip: false,
+            rolled_delay: None,
         });
     }
     UnlockQueue {

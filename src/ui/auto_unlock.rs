@@ -10,6 +10,7 @@ const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
 
 enum AutoNote {
     Waiting { name: String, seconds: u64 },
+    Rolled { id: String, seconds: u64 },
     Unlocked(String),
     Failed { id: String, message: String },
     Finished,
@@ -28,7 +29,6 @@ pub(super) struct AutoUnlock {
     pub fetching: bool,
     fetch_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<UnlockQueue, String>)>>,
     pub running: bool,
-    pub stop_on_spoof_fail: bool,
     spoof_halted: bool,
     stop: Option<tokio::sync::watch::Sender<bool>>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -51,7 +51,6 @@ impl AutoUnlock {
             fetching: false,
             fetch_rx: None,
             running: false,
-            stop_on_spoof_fail: false,
             spoof_halted: false,
             stop: None,
             task: None,
@@ -85,14 +84,33 @@ impl KilogApp {
             if tool_button(ui, "Add Skips", !self.auto.fetching).clicked() {
                 skips = true;
             }
+            let mut options_changed = false;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.checkbox(
-                    &mut self.auto.stop_on_spoof_fail,
-                    egui::RichText::new("Stop unlocking when spoofing fails")
-                        .size(13.0)
-                        .color(TEXT),
-                );
+                ui.spacing_mut().item_spacing.x = 16.0;
+                options_changed |= ui
+                    .checkbox(
+                        &mut self.config.stop_on_spoof_fail,
+                        egui::RichText::new("Stop unlocking when spoofing fails")
+                            .size(13.0)
+                            .color(TEXT),
+                    )
+                    .changed();
+                let randomized = ui
+                    .checkbox(
+                        &mut self.config.use_randomized_delays,
+                        egui::RichText::new("Use randomized delays")
+                            .size(13.0)
+                            .color(TEXT),
+                    )
+                    .changed();
+                if randomized && !self.config.use_randomized_delays {
+                    self.clear_rolled_delays();
+                }
+                options_changed |= randomized;
             });
+            if options_changed {
+                self.persist_config();
+            }
         });
         if build {
             self.fetch_reference(ui.ctx().clone());
@@ -125,7 +143,12 @@ impl KilogApp {
         let mut stop = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            if tool_button(ui, "Start unlock", !self.auto.running && !self.auto.fetching).clicked()
+            if tool_button(
+                ui,
+                "Start unlock",
+                !self.auto.running && !self.auto.fetching,
+            )
+            .clicked()
             {
                 start = true;
             }
@@ -181,35 +204,75 @@ impl KilogApp {
     }
 
     fn draw_queue_list(&mut self, ui: &mut egui::Ui, width: f32) {
-        let Some(entries) = self
-            .auto
-            .queue
-            .as_ref()
-            .map(|queue| queue.entries.clone())
-        else {
+        if self.config.use_randomized_delays {
+            self.fill_missing_rolls();
+        }
+        let Some(entries) = self.auto.queue.as_ref().map(|queue| queue.entries.clone()) else {
             return;
         };
         if entries.is_empty() {
             return;
         }
         ui.add_space(16.0);
+        let show_randomized = self.config.use_randomized_delays;
         let mut elapsed = 0_u64;
+        let mut rolled_elapsed = 0_u64;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let row_w = ui.available_width();
                 let row_w = if row_w.is_finite() { row_w } else { width };
                 for entry in &entries {
-                    let time = if entry.skip {
-                        "Skipped".to_owned()
+                    let (time, randomized) = if entry.skip {
+                        ("Skipped".to_owned(), None)
                     } else {
                         elapsed = elapsed.saturating_add(entry.delay_seconds);
-                        format_hms(elapsed)
+                        let randomized = if show_randomized {
+                            entry.rolled_delay.map(|delay| {
+                                rolled_elapsed = rolled_elapsed.saturating_add(delay);
+                                format!("randomized to {}", format_hms(rolled_elapsed))
+                            })
+                        } else {
+                            None
+                        };
+                        (format_hms(elapsed), randomized)
                     };
-                    queue_row(ui, row_w, &entry.name, &time, entry.skip, entry.done);
+                    queue_row(
+                        ui,
+                        row_w,
+                        &entry.name,
+                        &time,
+                        randomized.as_deref(),
+                        entry.skip,
+                        entry.done,
+                    );
                     ui.add_space(8.0);
                 }
             });
+    }
+
+    fn fill_missing_rolls(&mut self) {
+        let settings = self.config.randomize_delays.clone();
+        let Some(queue) = &mut self.auto.queue else {
+            return;
+        };
+        for entry in queue.entries.iter_mut().filter(|entry| !entry.skip) {
+            if entry.rolled_delay.is_none() {
+                entry.rolled_delay = Some(crate::config::randomize_delay(
+                    entry.delay_seconds,
+                    &settings,
+                ));
+            }
+        }
+    }
+
+    fn clear_rolled_delays(&mut self) {
+        let Some(queue) = &mut self.auto.queue else {
+            return;
+        };
+        for entry in &mut queue.entries {
+            entry.rolled_delay = None;
+        }
     }
 
     pub(super) fn draw_auto_status(&mut self, ui: &mut egui::Ui) {
@@ -220,7 +283,11 @@ impl KilogApp {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(egui::RichText::new("Building queue…").size(13.0).color(MUTED));
+                ui.label(
+                    egui::RichText::new("Building queue…")
+                        .size(13.0)
+                        .color(MUTED),
+                );
             });
         } else if !self.auto.running
             && let Some(status) = &self.auto.status
@@ -295,7 +362,7 @@ impl KilogApp {
     }
 
     pub(super) fn halt_unlock_for_spoof(&mut self) {
-        if !self.auto.stop_on_spoof_fail || !self.auto.running {
+        if !self.config.stop_on_spoof_fail || !self.auto.running {
             return;
         }
         self.auto.spoof_halted = true;
@@ -342,7 +409,11 @@ impl KilogApp {
                 if self.auto.fetching {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(egui::RichText::new("Building queue…").size(13.0).color(MUTED));
+                        ui.label(
+                            egui::RichText::new("Building queue…")
+                                .size(13.0)
+                                .color(MUTED),
+                        );
                     });
                 } else if tool_button(ui, "Build queue", !self.auto.gamertag.trim().is_empty())
                     .clicked()
@@ -385,43 +456,45 @@ impl KilogApp {
                     return;
                 };
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} · Title {}",
-                        queue.gamertag, queue.title_id
-                    ))
-                    .size(13.0)
-                    .color(MUTED),
+                    egui::RichText::new(format!("{} · Title {}", queue.gamertag, queue.title_id))
+                        .size(13.0)
+                        .color(MUTED),
                 );
                 ui.add_space(8.0);
-                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                    for (index, entry) in queue.entries.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.set_min_width(480.0);
-                            let name = if entry.done {
-                                format!("{}. {} · done", index + 1, entry.name)
-                            } else {
-                                format!("{}. {}", index + 1, entry.name)
-                            };
-                            ui.label(egui::RichText::new(name).size(14.0).color(TEXT).strong());
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let mut seconds = entry.delay_seconds.to_string();
-                                    let field = ui.add(
-                                        egui::TextEdit::singleline(&mut seconds).desired_width(72.0),
-                                    );
-                                    ui.label(egui::RichText::new("sec").size(12.0).color(MUTED));
-                                    if field.changed()
-                                        && let Ok(value) = seconds.trim().parse::<u64>()
-                                    {
-                                        entry.delay_seconds = value;
-                                    }
-                                },
-                            );
-                        });
-                        ui.add_space(6.0);
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .max_height(420.0)
+                    .show(ui, |ui| {
+                        for (index, entry) in queue.entries.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.set_min_width(480.0);
+                                let name = if entry.done {
+                                    format!("{}. {} · done", index + 1, entry.name)
+                                } else {
+                                    format!("{}. {}", index + 1, entry.name)
+                                };
+                                ui.label(egui::RichText::new(name).size(14.0).color(TEXT).strong());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let mut seconds = entry.delay_seconds.to_string();
+                                        let field = ui.add(
+                                            egui::TextEdit::singleline(&mut seconds)
+                                                .desired_width(72.0),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new("sec").size(12.0).color(MUTED),
+                                        );
+                                        if field.changed()
+                                            && let Ok(value) = seconds.trim().parse::<u64>()
+                                        {
+                                            entry.delay_seconds = value;
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(6.0);
+                        }
+                    });
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
@@ -501,21 +574,27 @@ impl KilogApp {
                     scroll.bar_outer_margin = 0.0;
                 }
                 let font = egui::FontId::proportional(14.0);
-                let text_width = queue.entries.iter().enumerate().fold(0.0_f32, |widest, (index, entry)| {
-                    let label = format!("{}. {}", index + 1, entry.name);
-                    let width = ui.painter().layout_no_wrap(label, font.clone(), TEXT).size().x;
-                    widest.max(width)
-                });
+                let text_width =
+                    queue
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .fold(0.0_f32, |widest, (index, entry)| {
+                            let label = format!("{}. {}", index + 1, entry.name);
+                            let width = ui
+                                .painter()
+                                .layout_no_wrap(label, font.clone(), TEXT)
+                                .size()
+                                .x;
+                            widest.max(width)
+                        });
                 let width = (text_width + 40.0).clamp(220.0, 560.0);
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} · Title {}",
-                        queue.gamertag, queue.title_id
-                    ))
-                    .size(13.0)
-                    .color(MUTED),
+                    egui::RichText::new(format!("{} · Title {}", queue.gamertag, queue.title_id))
+                        .size(13.0)
+                        .color(MUTED),
                 );
                 ui.add_space(8.0);
                 let list_height = (queue.entries.len().max(1) as f32 * 26.0).min(420.0);
@@ -623,13 +702,17 @@ impl KilogApp {
     }
 
     fn poll_reference(&mut self) {
-        let ready = self.auto.fetch_rx.as_mut().and_then(|rx| match rx.try_recv() {
-            Ok(update) => Some(update),
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                Some((0, Err("queue request was dropped".into())))
-            }
-        });
+        let ready = self
+            .auto
+            .fetch_rx
+            .as_mut()
+            .and_then(|rx| match rx.try_recv() {
+                Ok(update) => Some(update),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Some((0, Err("queue request was dropped".into())))
+                }
+            });
         let Some((title_id, result)) = ready else {
             return;
         };
@@ -681,6 +764,8 @@ impl KilogApp {
             return;
         };
         let language = crate::xbox::titles::accept_language(self.config.force_region);
+        let delays = self.config.randomize_delays.clone();
+        let use_randomized = self.config.use_randomized_delays;
         self.begin_spoof(ctx.clone(), queue.title_id);
         if let Some(task) = self.auto.task.take() {
             task.abort();
@@ -705,20 +790,19 @@ impl KilogApp {
                     )
                     .await
                     {
-                        Ok(board) => match board
-                            .service_config_id
-                            .filter(|id| !id.trim().is_empty())
-                        {
-                            Some(id) => id,
-                            None => {
-                                let _ = note_tx.send(AutoNote::Failed {
-                                    id: String::new(),
-                                    message: "This title has no service config id.".into(),
-                                });
-                                ctx.request_repaint();
-                                return;
+                        Ok(board) => {
+                            match board.service_config_id.filter(|id| !id.trim().is_empty()) {
+                                Some(id) => id,
+                                None => {
+                                    let _ = note_tx.send(AutoNote::Failed {
+                                        id: String::new(),
+                                        message: "This title has no service config id.".into(),
+                                    });
+                                    ctx.request_repaint();
+                                    return;
+                                }
                             }
-                        },
+                        }
                         Err(err) => {
                             let _ = note_tx.send(AutoNote::Failed {
                                 id: String::new(),
@@ -732,6 +816,8 @@ impl KilogApp {
             };
             run_queue(
                 queue,
+                delays,
+                use_randomized,
                 authorization,
                 xuid,
                 service_config_id,
@@ -747,6 +833,16 @@ impl KilogApp {
         match note {
             AutoNote::Waiting { name, seconds } => {
                 self.auto.status = Some(format!("Next: {name} in {seconds}s"));
+            }
+            AutoNote::Rolled { id, seconds } => {
+                if let Some(entry) = self
+                    .auto
+                    .queue
+                    .as_mut()
+                    .and_then(|queue| queue.entries.iter_mut().find(|entry| entry.id == id))
+                {
+                    entry.rolled_delay = Some(seconds);
+                }
             }
             AutoNote::Unlocked(id) => {
                 if let Some(queue) = &mut self.auto.queue {
@@ -784,6 +880,13 @@ impl KilogApp {
         }
     }
 
+    fn persist_config(&mut self) {
+        self.save_error = self.config.save().err().map(|err| err.to_string());
+        if let Some(err) = &self.save_error {
+            tracing::error!(error = %err, "failed to save config");
+        }
+    }
+
     fn persist_queue(&self) -> Result<(), String> {
         let Some(queue) = &self.auto.queue else {
             return Ok(());
@@ -802,6 +905,8 @@ impl KilogApp {
 
 async fn run_queue(
     queue: UnlockQueue,
+    delays: crate::config::DelayRandomize,
+    use_randomized: bool,
     authorization: String,
     xuid: String,
     service_config_id: String,
@@ -817,14 +922,27 @@ async fn run_queue(
         if *stop.borrow() {
             break;
         }
-        if entry.delay_seconds > 0 {
+        let wait = if use_randomized {
+            entry.rolled_delay.unwrap_or_else(|| {
+                let seconds = crate::config::randomize_delay(entry.delay_seconds, &delays);
+                let _ = notes.send(AutoNote::Rolled {
+                    id: entry.id.clone(),
+                    seconds,
+                });
+                ctx.request_repaint();
+                seconds
+            })
+        } else {
+            entry.delay_seconds
+        };
+        if wait > 0 {
             let _ = notes.send(AutoNote::Waiting {
                 name: entry.name.clone(),
-                seconds: entry.delay_seconds,
+                seconds: wait,
             });
             ctx.request_repaint();
             tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(entry.delay_seconds)) => {}
+                _ = tokio::time::sleep(std::time::Duration::from_secs(wait)) => {}
                 _ = stop.changed() => {}
             }
             if *stop.borrow() {
@@ -883,7 +1001,15 @@ async fn run_queue(
     ctx.request_repaint();
 }
 
-fn queue_row(ui: &mut egui::Ui, width: f32, name: &str, time: &str, skip: bool, done: bool) {
+fn queue_row(
+    ui: &mut egui::Ui,
+    width: f32,
+    name: &str,
+    time: &str,
+    randomized: Option<&str>,
+    skip: bool,
+    done: bool,
+) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
     let (fill, name_color, time_color) = if done {
         (
@@ -892,11 +1018,7 @@ fn queue_row(ui: &mut egui::Ui, width: f32, name: &str, time: &str, skip: bool, 
             Color32::from_rgb(146, 220, 164),
         )
     } else if skip {
-        (
-            Color32::from_rgb(22, 23, 27),
-            MUTED,
-            MUTED,
-        )
+        (Color32::from_rgb(22, 23, 27), MUTED, MUTED)
     } else {
         (Color32::from_rgb(26, 28, 34), TEXT, TEXT)
     };
@@ -914,12 +1036,35 @@ fn queue_row(ui: &mut egui::Ui, width: f32, name: &str, time: &str, skip: bool, 
         );
     }
     let inner = rect.shrink2(egui::vec2(16.0, 0.0));
-    let time_galley = ui.painter().layout_no_wrap(
-        time.to_owned(),
-        egui::FontId::monospace(14.0),
-        time_color,
-    );
-    let name_width = (inner.width() - time_galley.size().x - 16.0).max(24.0);
+    let time_galley = ui
+        .painter()
+        .layout_job(egui::text::LayoutJob::single_section(
+            time.to_owned(),
+            egui::TextFormat {
+                font_id: egui::FontId::monospace(14.0),
+                color: if randomized.is_some() {
+                    MUTED
+                } else {
+                    time_color
+                },
+                strikethrough: if randomized.is_some() {
+                    egui::Stroke::new(1.0, MUTED)
+                } else {
+                    egui::Stroke::NONE
+                },
+                ..Default::default()
+            },
+        ));
+    let randomized_galley = randomized.map(|label| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::monospace(14.0), time_color)
+    });
+    let randomized_width = randomized_galley
+        .as_ref()
+        .map(|galley| galley.size().x + 10.0)
+        .unwrap_or(0.0);
+    let time_width = time_galley.size().x + randomized_width;
+    let name_width = (inner.width() - time_width - 16.0).max(24.0);
     let mut name_job = egui::text::LayoutJob::single_section(
         name.replace(['\n', '\r'], " "),
         egui::TextFormat {
@@ -933,21 +1078,30 @@ fn queue_row(ui: &mut egui::Ui, width: f32, name: &str, time: &str, skip: bool, 
     name_job.wrap.break_anywhere = true;
     let name_galley = ui.painter().layout_job(name_job);
     ui.painter().galley(
-        egui::pos2(
-            inner.left(),
-            inner.center().y - name_galley.size().y / 2.0,
-        ),
+        egui::pos2(inner.left(), inner.center().y - name_galley.size().y / 2.0),
         name_galley,
         name_color,
     );
+    let time_x = inner.right() - time_width;
     ui.painter().galley(
-        egui::pos2(
-            inner.right() - time_galley.size().x,
-            inner.center().y - time_galley.size().y / 2.0,
-        ),
+        egui::pos2(time_x, inner.center().y - time_galley.size().y / 2.0),
         time_galley,
-        time_color,
+        if randomized.is_some() {
+            MUTED
+        } else {
+            time_color
+        },
     );
+    if let Some(galley) = randomized_galley {
+        ui.painter().galley(
+            egui::pos2(
+                inner.right() - galley.size().x,
+                inner.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            time_color,
+        );
+    }
 }
 
 fn format_hms(total_seconds: u64) -> String {
@@ -959,9 +1113,9 @@ fn format_hms(total_seconds: u64) -> String {
 
 fn tool_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
     let color = if enabled { TEXT } else { MUTED };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), color);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), color);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(galley.size().x + 22.0, 32.0),
         if enabled {

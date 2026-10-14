@@ -341,9 +341,9 @@ fn achievement_bar(ui: &mut egui::Ui, rect: egui::Rect, title: &Title) {
         egui::FontId::proportional(12.0),
         TEXT,
     );
-    let score_galley =
-        ui.painter()
-            .layout_no_wrap(score, egui::FontId::proportional(12.0), TEXT);
+    let score_galley = ui
+        .painter()
+        .layout_no_wrap(score, egui::FontId::proportional(12.0), TEXT);
     let mark = 12.0;
     let score_right = rect.right() - 8.0;
     let mark_rect = egui::Rect::from_center_size(

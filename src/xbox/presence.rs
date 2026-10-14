@@ -181,11 +181,12 @@ async fn post_heartbeat(
             message: "xuid is empty".into(),
         });
     }
-    let body = serde_json::to_string(&heartbeat_body(session))
-        .map_err(|err| HeartbeatError::Rejected {
+    let body = serde_json::to_string(&heartbeat_body(session)).map_err(|err| {
+        HeartbeatError::Rejected {
             code: None,
             message: format!("heartbeat body failed: {err}"),
-        })?;
+        }
+    })?;
     let response = client
         .post(heartbeat_url(xuid))
         .header("Authorization", session.authorization.as_str())
@@ -242,9 +243,9 @@ impl HeartbeatError {
 impl std::fmt::Display for HeartbeatError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth { message, .. } | Self::Rejected { message, .. } | Self::Transport(message) => {
-                formatter.write_str(message)
-            }
+            Self::Auth { message, .. }
+            | Self::Rejected { message, .. }
+            | Self::Transport(message) => formatter.write_str(message),
         }
     }
 }

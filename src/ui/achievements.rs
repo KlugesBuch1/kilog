@@ -679,10 +679,8 @@ fn game_header(ui: &mut egui::Ui, title: &Title, board: Option<&TitleAchievement
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             let mark = 16.0;
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(mark, mark),
-                                egui::Sense::hover(),
-                            );
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(mark, mark), egui::Sense::hover());
                             super::theme::gamerscore_icon(ui, rect);
                             ui.label(
                                 egui::RichText::new(board.gamerscore_label())
