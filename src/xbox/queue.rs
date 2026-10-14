@@ -20,6 +20,9 @@ pub struct QueueEntry {
     pub done: bool,
     #[serde(default)]
     pub skip: bool,
+    /// Seconds left if a wait was stopped before this achievement unlocked.
+    #[serde(default)]
+    pub remaining_seconds: Option<u64>,
     /// Delay rolled for this entry. Not saved; the queue order stays the original one.
     #[serde(skip)]
     pub rolled_delay: Option<u64>,
@@ -92,6 +95,7 @@ pub fn build_queue(
             delay_seconds,
             done: false,
             skip: false,
+            remaining_seconds: None,
             rolled_delay: None,
         });
     }

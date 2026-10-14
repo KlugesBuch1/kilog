@@ -8,11 +8,27 @@ use crate::xbox::titles::parse_title_id;
 
 const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
 
+struct ActiveWait {
+    id: String,
+    seconds: u64,
+    started: std::time::Instant,
+}
+
 enum AutoNote {
-    Waiting { name: String, seconds: u64 },
-    Rolled { id: String, seconds: u64 },
+    Waiting {
+        id: String,
+        name: String,
+        seconds: u64,
+    },
+    Rolled {
+        id: String,
+        seconds: u64,
+    },
     Unlocked(String),
-    Failed { id: String, message: String },
+    Failed {
+        id: String,
+        message: String,
+    },
     Finished,
 }
 
@@ -30,6 +46,7 @@ pub(super) struct AutoUnlock {
     fetch_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<UnlockQueue, String>)>>,
     pub running: bool,
     spoof_halted: bool,
+    active_wait: Option<ActiveWait>,
     stop: Option<tokio::sync::watch::Sender<bool>>,
     task: Option<tokio::task::JoinHandle<()>>,
     notes: Option<tokio::sync::mpsc::UnboundedReceiver<AutoNote>>,
@@ -52,6 +69,7 @@ impl AutoUnlock {
             fetch_rx: None,
             running: false,
             spoof_halted: false,
+            active_wait: None,
             stop: None,
             task: None,
             notes: None,
@@ -371,6 +389,7 @@ impl KilogApp {
     }
 
     pub(super) fn stop_auto_unlock(&mut self) {
+        self.remember_remaining_wait();
         if let Some(stop) = &self.auto.stop {
             let _ = stop.send(true);
         }
@@ -487,6 +506,9 @@ impl KilogApp {
                                         if field.changed()
                                             && let Ok(value) = seconds.trim().parse::<u64>()
                                         {
+                                            if entry.delay_seconds != value {
+                                                entry.remaining_seconds = None;
+                                            }
                                             entry.delay_seconds = value;
                                         }
                                     },
@@ -831,7 +853,20 @@ impl KilogApp {
 
     fn apply_auto_note(&mut self, note: AutoNote) {
         match note {
-            AutoNote::Waiting { name, seconds } => {
+            AutoNote::Waiting { id, name, seconds } => {
+                if let Some(entry) = self
+                    .auto
+                    .queue
+                    .as_mut()
+                    .and_then(|queue| queue.entries.iter_mut().find(|entry| entry.id == id))
+                {
+                    entry.remaining_seconds = None;
+                }
+                self.auto.active_wait = Some(ActiveWait {
+                    id,
+                    seconds,
+                    started: std::time::Instant::now(),
+                });
                 self.auto.status = Some(format!("Next: {name} in {seconds}s"));
             }
             AutoNote::Rolled { id, seconds } => {
@@ -845,9 +880,11 @@ impl KilogApp {
                 }
             }
             AutoNote::Unlocked(id) => {
+                self.auto.active_wait = None;
                 if let Some(queue) = &mut self.auto.queue {
                     if let Some(entry) = queue.entries.iter_mut().find(|entry| entry.id == id) {
                         entry.done = true;
+                        entry.remaining_seconds = None;
                         self.auto.status = Some(format!("Unlocked {}", entry.name));
                     }
                 }
@@ -857,8 +894,17 @@ impl KilogApp {
                 }
             }
             AutoNote::Failed { id, message } => {
+                self.auto.active_wait = None;
                 self.auto.running = false;
                 self.auto.status = None;
+                if let Some(entry) = self
+                    .auto
+                    .queue
+                    .as_mut()
+                    .and_then(|queue| queue.entries.iter_mut().find(|entry| entry.id == id))
+                {
+                    entry.remaining_seconds = Some(0);
+                }
                 let name = self
                     .auto
                     .queue
@@ -870,6 +916,7 @@ impl KilogApp {
                 let _ = self.persist_queue();
             }
             AutoNote::Finished => {
+                self.auto.active_wait = None;
                 self.auto.running = false;
                 self.auto.status = None;
                 if !self.auto.spoof_halted {
@@ -877,6 +924,22 @@ impl KilogApp {
                 }
                 self.auto.spoof_halted = false;
             }
+        }
+    }
+
+    fn remember_remaining_wait(&mut self) {
+        let Some(wait) = self.auto.active_wait.take() else {
+            return;
+        };
+        let elapsed = wait.started.elapsed().as_secs();
+        let left = wait.seconds.saturating_sub(elapsed);
+        if let Some(entry) = self
+            .auto
+            .queue
+            .as_mut()
+            .and_then(|queue| queue.entries.iter_mut().find(|entry| entry.id == wait.id))
+        {
+            entry.remaining_seconds = Some(left);
         }
     }
 
@@ -922,7 +985,9 @@ async fn run_queue(
         if *stop.borrow() {
             break;
         }
-        let wait = if use_randomized {
+        let wait = if let Some(left) = entry.remaining_seconds {
+            left
+        } else if use_randomized {
             entry.rolled_delay.unwrap_or_else(|| {
                 let seconds = crate::config::randomize_delay(entry.delay_seconds, &delays);
                 let _ = notes.send(AutoNote::Rolled {
@@ -937,6 +1002,7 @@ async fn run_queue(
         };
         if wait > 0 {
             let _ = notes.send(AutoNote::Waiting {
+                id: entry.id.clone(),
                 name: entry.name.clone(),
                 seconds: wait,
             });
