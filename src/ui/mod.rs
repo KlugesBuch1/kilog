@@ -72,6 +72,8 @@ pub struct KilogApp {
     auto: auto_unlock::AutoUnlock,
     spoof: spoofing::SpoofState,
     event_notice: Option<String>,
+    events_sync: Option<String>,
+    events_sync_rx: Option<tokio::sync::oneshot::Receiver<Result<(), String>>>,
 }
 
 impl KilogApp {
@@ -112,13 +114,51 @@ impl KilogApp {
             auto: auto_unlock::AutoUnlock::new(),
             spoof: spoofing::SpoofState::new(),
             event_notice: None,
+            events_sync: None,
+            events_sync_rx: None,
         };
         match boot {
             Boot::Mock => app.apply_developer_mock(),
             Boot::Interactive => app.interactive_pending = true,
             Boot::Restore(refresh) => app.spawn_restore(cc.egui_ctx.clone(), refresh),
         }
+        app.spawn_event_sync(cc.egui_ctx.clone());
         app
+    }
+
+    fn spawn_event_sync(&mut self, ctx: egui::Context) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.events_sync_rx = Some(rx);
+        self.events_sync = Some("Updating event games…".into());
+        self.runtime.spawn(async move {
+            let result = crate::xbox::events::sync().await.map_err(|err| {
+                tracing::warn!(error = %err, "event games update failed");
+                err.to_string()
+            });
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_event_sync(&mut self) {
+        let ready = self
+            .events_sync_rx
+            .as_mut()
+            .and_then(|rx| match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Some(Err("event games update was dropped".into()))
+                }
+            });
+        let Some(result) = ready else {
+            return;
+        };
+        self.events_sync_rx = None;
+        self.events_sync = match result {
+            Ok(()) => None,
+            Err(err) => Some(format!("Event games could not be updated. {err}")),
+        };
     }
 
     fn apply_developer_mock(&mut self) {
@@ -358,6 +398,10 @@ impl KilogApp {
             .rect_filled(bar, egui::CornerRadius::same(1), ACCENT);
 
         ui.add_space(18.0);
+        if let Some(notice) = &self.events_sync {
+            ui.label(egui::RichText::new(notice).size(14.0).color(theme::MUTED));
+            ui.add_space(12.0);
+        }
         if let Some(notice) = &self.event_notice {
             ui.label(egui::RichText::new(notice).size(14.0).color(theme::TEXT));
             ui.add_space(12.0);
@@ -401,6 +445,7 @@ impl eframe::App for KilogApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_restore();
         self.poll_auth();
+        self.poll_event_sync();
         if self.profile_pending {
             self.profile_pending = false;
             self.begin_profile_load(ctx.clone());

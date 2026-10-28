@@ -390,7 +390,8 @@ impl KilogApp {
     }
 
     fn spawn_unlock(&mut self, ctx: egui::Context, achievement_id: String) {
-        if self.achievements_page.unlocking.is_some() || self.achievements_page.event_block.is_some()
+        if self.achievements_page.unlocking.is_some()
+            || self.achievements_page.event_block.is_some()
         {
             return;
         }
@@ -514,7 +515,8 @@ impl KilogApp {
         let language = crate::xbox::titles::accept_language(self.config.force_region);
         let (epoch, tx) = self.achievements_page.begin();
         self.achievements_page.task = Some(self.runtime.spawn(async move {
-            let style = crate::xbox::achievements::fetch_unlock_style(&authorization, &xuid, title_id);
+            let style =
+                crate::xbox::achievements::fetch_unlock_style(&authorization, &xuid, title_id);
             let (title, achievements, style) = if lookup {
                 let title_ids = [title_id];
                 let (found, achievements, style) = tokio::join!(
@@ -1061,7 +1063,11 @@ fn achievement_card(
             egui::Align2::CENTER_CENTER,
             if pending { "..." } else { "Unlock" },
             egui::FontId::proportional(12.0),
-            if pending || !unlocks_enabled { MUTED } else { TEXT },
+            if pending || !unlocks_enabled {
+                MUTED
+            } else {
+                TEXT
+            },
         );
         if click.hovered() && !pending && unlocks_enabled {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

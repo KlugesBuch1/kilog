@@ -681,12 +681,9 @@ impl KilogApp {
         self.auto.fetch_rx = Some(rx);
         self.runtime.spawn(async move {
             let result = async {
-                let style = crate::xbox::achievements::fetch_unlock_style(
-                    &authorization,
-                    &xuid,
-                    title_id,
-                )
-                .await?;
+                let style =
+                    crate::xbox::achievements::fetch_unlock_style(&authorization, &xuid, title_id)
+                        .await?;
                 if style == crate::xbox::achievements::UnlockStyle::Event
                     && let Some(message) = crate::xbox::events::missing_event_support(title_id)?
                 {

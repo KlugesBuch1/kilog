@@ -179,6 +179,12 @@ pub fn config_path() -> Result<PathBuf, Error> {
     Ok(kilog_dir()?.join("config.json"))
 }
 
+pub fn events_dir() -> Result<PathBuf, Error> {
+    let dir = kilog_dir()?.join("events");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AppConfig, DelayRandomize, randomize_delay_with};

@@ -25,7 +25,7 @@ eframe = "0.36.2"
 egui-lucide = "0.1.0"
 egui_extras = { version = "0.36.2", features = ["svg", "image", "http"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "deflate"] }
 base64 = "0.22"
 p256 = { version = "0.13", features = ["ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }

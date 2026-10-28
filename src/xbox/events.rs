@@ -1,14 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::error::Error;
 use crate::xbox::achievements::ProgressStatus;
 
 const COLLECTOR_URL: &str = "https://v10.events.data.microsoft.com/OneCollector/1.0/";
+const EVENTS_LIST_URL: &str =
+    "https://api.github.com/repos/Achievement-Labs/achievement-labs/contents/Events?ref=main";
+const USER_AGENT: &str = "kilog";
+const MANIFEST_FILE: &str = ".manifest.json";
 
 struct Database {
     dir: PathBuf,
@@ -31,9 +36,228 @@ struct Replacement {
     replacement: String,
 }
 
-static DATABASE: OnceLock<Database> = OnceLock::new();
+static DATABASE: Mutex<Option<Arc<Database>>> = Mutex::new(None);
 static TITLES: Mutex<Option<HashMap<u64, TitleRecord>>> = Mutex::new(None);
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Deserialize)]
+struct RemoteEntry {
+    name: String,
+    sha: String,
+    #[serde(rename = "type")]
+    kind: String,
+    download_url: Option<String>,
+}
+
+struct PendingFile {
+    name: String,
+    sha: String,
+    url: String,
+}
+
+pub(crate) async fn sync() -> Result<(), Error> {
+    let dir = crate::config::events_dir()?;
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(600))
+        .build()?;
+    let remote = fetch_listing(&client).await?;
+    let mut manifest = load_manifest(&dir);
+    let mut remote_names = HashSet::new();
+    let mut unchanged = 0usize;
+    let mut pending = Vec::new();
+    for entry in remote {
+        if entry.kind != "file" {
+            continue;
+        }
+        let Some(url) = entry.download_url else {
+            continue;
+        };
+        if !safe_event_name(&entry.name) {
+            continue;
+        }
+        remote_names.insert(entry.name.clone());
+        let current = manifest.get(&entry.name).map(String::as_str);
+        if !needs_download(current, &entry.sha, dir.join(&entry.name).is_file()) {
+            manifest.insert(entry.name, entry.sha);
+            unchanged += 1;
+            continue;
+        }
+        pending.push(PendingFile {
+            name: entry.name,
+            sha: entry.sha,
+            url,
+        });
+    }
+    pending.sort_by_key(|file| file.name != "Data.json");
+
+    let mut removed = 0usize;
+    manifest.retain(|name, _| {
+        if remote_names.contains(name) {
+            return true;
+        }
+        let path = dir.join(name);
+        if path.is_file() {
+            if std::fs::remove_file(&path).is_err() {
+                return true;
+            }
+            removed += 1;
+        }
+        false
+    });
+    save_manifest(&dir, &manifest)?;
+
+    tracing::info!(
+        pending = pending.len(),
+        unchanged,
+        removed,
+        "syncing event games"
+    );
+
+    let manifest = Arc::new(Mutex::new(manifest));
+    let mut tasks = tokio::task::JoinSet::new();
+    for file in pending {
+        let client = client.clone();
+        let dir = dir.clone();
+        let manifest = Arc::clone(&manifest);
+        tasks.spawn(async move {
+            let dest = dir.join(&file.name);
+            write_download(&client, &file.url, &dest).await?;
+            store_sha(&manifest, &dir, file.name, file.sha)?;
+            Ok::<(), Error>(())
+        });
+    }
+
+    let mut updated = 0usize;
+    let mut failed = 0usize;
+    let mut first_error = None;
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok(Ok(())) => updated += 1,
+            Ok(Err(err)) => {
+                if first_error.is_none() {
+                    first_error = Some(err.to_string());
+                }
+                failed += 1;
+            }
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err.to_string());
+                }
+                failed += 1;
+            }
+        }
+    }
+
+    if updated > 0 || removed > 0 {
+        refresh_database()?;
+    }
+    if let Some(err) = first_error {
+        return Err(Error::Xbox(format!(
+            "{failed} event file(s) failed to download: {err}"
+        )));
+    }
+    tracing::info!(updated, unchanged, removed, "event games updated");
+    Ok(())
+}
+
+async fn fetch_listing(client: &reqwest::Client) -> Result<Vec<RemoteEntry>, Error> {
+    let entries: Vec<RemoteEntry> = client
+        .get(EVENTS_LIST_URL)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if entries.len() >= 1000 {
+        return Err(Error::Xbox(
+            "event listing was truncated; refusing a partial update".into(),
+        ));
+    }
+    Ok(entries)
+}
+
+fn needs_download(saved_sha: Option<&str>, remote_sha: &str, present: bool) -> bool {
+    !(present && saved_sha == Some(remote_sha))
+}
+
+fn safe_event_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.ends_with(".partial")
+        && !name.contains(['/', '\\', ':', '\0'])
+        && name.bytes().all(|byte| byte >= 32)
+}
+
+fn load_manifest(dir: &Path) -> HashMap<String, String> {
+    let path = dir.join(MANIFEST_FILE);
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn save_manifest(dir: &Path, files: &HashMap<String, String>) -> Result<(), Error> {
+    let path = dir.join(MANIFEST_FILE);
+    let tmp = partial_path(&path);
+    std::fs::write(&tmp, serde_json::to_vec(files)?)?;
+    replace_file(&tmp, &path)?;
+    Ok(())
+}
+
+fn store_sha(
+    manifest: &Mutex<HashMap<String, String>>,
+    dir: &Path,
+    name: String,
+    sha: String,
+) -> Result<(), Error> {
+    let mut guard = manifest
+        .lock()
+        .map_err(|_| Error::Xbox("event manifest lock was poisoned".into()))?;
+    guard.insert(name, sha);
+    save_manifest(dir, &guard)
+}
+
+async fn write_download(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), Error> {
+    let mut response = client.get(url).send().await?.error_for_status()?;
+    let tmp = partial_path(dest);
+    let write_result = async {
+        let mut file = std::fs::File::create(&tmp)?;
+        while let Some(chunk) = response.chunk().await? {
+            std::io::Write::write_all(&mut file, &chunk)?;
+        }
+        file.sync_all()?;
+        Ok::<(), Error>(())
+    }
+    .await;
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    replace_file(&tmp, dest)?;
+    Ok(())
+}
+
+fn partial_path(dest: &Path) -> PathBuf {
+    let name = dest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("event");
+    dest.with_file_name(format!(".{name}.partial"))
+}
+
+fn replace_file(tmp: &Path, dest: &Path) -> Result<(), Error> {
+    if dest.exists() {
+        std::fs::remove_file(dest)?;
+    }
+    if let Err(err) = std::fs::rename(tmp, dest) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(err.into());
+    }
+    Ok(())
+}
 
 pub(crate) struct InstalledTemplate {
     pub title_id: u64,
@@ -44,11 +268,7 @@ pub(crate) fn install_template(path: &Path, bytes: &[u8]) -> Result<InstalledTem
     let title_id = template_title_id(path)?;
     let bytes = strip_bom(bytes);
     validate_template(bytes)?;
-    let Some(dir) = events_dir()? else {
-        return Err(Error::Xbox(
-            "event database was not found. Data.json needs to sit in assets/events".into(),
-        ));
-    };
+    let dir = crate::config::events_dir()?;
     let dest = dir.join(format!("{title_id}.json"));
     let same = match (path.canonicalize(), dest.canonicalize()) {
         (Ok(source), Ok(destination)) => source == destination,
@@ -66,13 +286,6 @@ pub(crate) fn install_template(path: &Path, bytes: &[u8]) -> Result<InstalledTem
         title_id,
         in_catalog: title_has_events(title_id)?,
     })
-}
-
-fn events_dir() -> Result<Option<PathBuf>, Error> {
-    if let Some(database) = DATABASE.get() {
-        return Ok(Some(database.dir.clone()));
-    }
-    Ok(find_events_dir())
 }
 
 fn template_title_id(path: &Path) -> Result<u64, Error> {
@@ -126,9 +339,7 @@ pub(crate) fn missing_event_support(title_id: u64) -> Result<Option<&'static str
 fn support_gap(has_template: bool, in_catalog: bool) -> Option<&'static str> {
     match (has_template, in_catalog) {
         (true, true) => None,
-        (false, false) => {
-            Some("This event-based game is not supported.")
-        }
+        (false, false) => Some("This event-based game is not supported."),
         (false, true) => Some("This event-based game has no event template file."),
         (true, false) => Some("This event-based game has no data entry."),
     }
@@ -192,31 +403,49 @@ pub(crate) async fn send_event_plan(
     Ok(status)
 }
 
-fn database() -> Result<Option<&'static Database>, Error> {
-    if let Some(database) = DATABASE.get() {
-        return Ok(Some(database));
+fn database() -> Result<Option<Arc<Database>>, Error> {
+    let guard = database_lock()?;
+    if let Some(database) = guard.as_ref() {
+        return Ok(Some(Arc::clone(database)));
     }
-    let Some(dir) = find_events_dir() else {
+    drop(guard);
+    let dir = crate::config::events_dir()?;
+    let path = dir.join("Data.json");
+    if !path.is_file() {
         return Ok(None);
-    };
-    let data = std::fs::read_to_string(dir.join("Data.json"))?;
-    Ok(Some(DATABASE.get_or_init(|| Database { dir, data })))
+    }
+    let data = std::fs::read_to_string(path)?;
+    let database = Arc::new(Database { dir, data });
+    let mut guard = database_lock()?;
+    if let Some(existing) = guard.as_ref() {
+        return Ok(Some(Arc::clone(existing)));
+    }
+    *guard = Some(Arc::clone(&database));
+    Ok(Some(database))
 }
 
-fn find_events_dir() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/events"));
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        candidates.push(parent.join("assets/events"));
+fn refresh_database() -> Result<(), Error> {
+    let dir = crate::config::events_dir()?;
+    let path = dir.join("Data.json");
+    let loaded = if path.is_file() {
+        Some(Arc::new(Database {
+            dir,
+            data: std::fs::read_to_string(path)?,
+        }))
+    } else {
+        None
+    };
+    *database_lock()? = loaded;
+    if let Ok(mut guard) = titles() {
+        *guard = None;
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("assets/events"));
-    }
-    candidates
-        .into_iter()
-        .find(|path| path.join("Data.json").is_file())
+    Ok(())
+}
+
+fn database_lock() -> Result<std::sync::MutexGuard<'static, Option<Arc<Database>>>, Error> {
+    DATABASE
+        .lock()
+        .map_err(|_| Error::Xbox("event database lock was poisoned".into()))
 }
 
 fn titles() -> Result<std::sync::MutexGuard<'static, Option<HashMap<u64, TitleRecord>>>, Error> {
@@ -352,9 +581,7 @@ impl Replacement {
             .and_then(Value::as_str)
             .unwrap_or("");
         if kind != "Replace" {
-            return Err(Error::Xbox(format!(
-                "unsupported event replacement {kind}"
-            )));
+            return Err(Error::Xbox(format!("unsupported event replacement {kind}")));
         }
         let target = value
             .get("Target")
@@ -397,7 +624,9 @@ fn render_event(
     body = body.replace("REPLACETIME", &format_utc(system_now()));
     body = body.replace("REPLACESEQ", &seq.to_string());
     let value: Value = serde_json::from_str(&body).map_err(|err| {
-        Error::Xbox(format!("event template is not valid json after replacement: {err}"))
+        Error::Xbox(format!(
+            "event template is not valid json after replacement: {err}"
+        ))
     })?;
     Ok(serde_json::to_string(&value)?)
 }
@@ -485,8 +714,8 @@ fn event_status(status: u16, body: &str) -> ProgressStatus {
 #[cfg(test)]
 mod tests {
     use super::{
-        batches, civil_from_days, event_status, extract_title, format_utc, render_event,
-        Replacement,
+        Replacement, batches, civil_from_days, event_status, extract_title, format_utc,
+        render_event,
     };
     use crate::xbox::achievements::ProgressStatus;
     use serde_json::Value;
@@ -495,9 +724,40 @@ mod tests {
     #[test]
     fn support_gap_requires_both_files() {
         assert!(super::support_gap(true, true).is_none());
-        assert!(super::support_gap(false, false).unwrap().contains("Data.json"));
-        assert!(super::support_gap(false, true).unwrap().contains("template"));
-        assert!(super::support_gap(true, false).unwrap().contains("Data.json"));
+        assert!(
+            super::support_gap(false, false)
+                .unwrap()
+                .contains("not supported")
+        );
+        assert!(
+            super::support_gap(false, true)
+                .unwrap()
+                .contains("template")
+        );
+        assert!(
+            super::support_gap(true, false)
+                .unwrap()
+                .contains("data entry")
+        );
+    }
+
+    #[test]
+    fn event_names_stay_inside_the_events_folder() {
+        assert!(super::safe_event_name("226038481.json"));
+        assert!(super::safe_event_name("Data.json"));
+        assert!(super::safe_event_name("Project Cars.json"));
+        assert!(!super::safe_event_name(".manifest.json"));
+        assert!(!super::safe_event_name("../config.json"));
+        assert!(!super::safe_event_name("nested/file.json"));
+        assert!(!super::safe_event_name(".Data.json.partial"));
+    }
+
+    #[test]
+    fn unchanged_files_are_not_downloaded_again() {
+        assert!(!super::needs_download(Some("abc"), "abc", true));
+        assert!(super::needs_download(Some("abc"), "def", true));
+        assert!(super::needs_download(Some("abc"), "abc", false));
+        assert!(super::needs_download(None, "abc", true));
     }
 
     #[test]
@@ -514,7 +774,10 @@ mod tests {
 
     #[test]
     fn utc_epoch_and_a_known_day() {
-        assert_eq!(format_utc(Duration::from_secs(0)), "1970-01-01T00:00:00.0000000Z");
+        assert_eq!(
+            format_utc(Duration::from_secs(0)),
+            "1970-01-01T00:00:00.0000000Z"
+        );
         assert_eq!(civil_from_days(18_628), (2021, 1, 1));
         assert_eq!(
             format_utc(Duration::from_secs(1_609_459_200)),
@@ -606,10 +869,7 @@ mod tests {
 
     #[test]
     fn collector_errors_are_rejected() {
-        assert_eq!(
-            event_status(200, r#"{"acc":1}"#),
-            ProgressStatus::Updated
-        );
+        assert_eq!(event_status(200, r#"{"acc":1}"#), ProgressStatus::Updated);
         assert!(matches!(
             event_status(200, r#"{"acc":1,"errors":[{"msg":"bad"}]}"#),
             ProgressStatus::Rejected(_)
@@ -619,7 +879,7 @@ mod tests {
 
     #[test]
     fn count_bout_record_score_renders() {
-        let template = include_str!("../../assets/events/226038481.json");
+        let template = include_str!("testdata/226038481.json");
         let body: Value = serde_json::json!({
             "Request1": {
                 "EventReplacement": {
@@ -642,24 +902,12 @@ mod tests {
         let batches = batches(&body).unwrap();
         let rendered = render_event(template, &batches[0], "9", 3).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
-        assert_eq!(
-            value["name"],
-            "Microsoft.XboxLive.T226038481.RecordScore"
-        );
+        assert_eq!(value["name"], "Microsoft.XboxLive.T226038481.RecordScore");
         assert_eq!(value["ext"]["utc"]["seq"], 3);
         assert_eq!(value["data"]["baseData"]["userId"], "9");
-        assert_eq!(value["data"]["baseData"]["properties"]["RecordScore"], 100000);
-    }
-
-    #[test]
-    fn bundled_catalog_builds_count_bout() {
-        let missing = super::event_plan(1, "1").unwrap();
-        assert!(missing.is_none());
-        let plan = super::event_plan(226038481, "1").unwrap().unwrap();
-        assert_eq!(plan.batches.len(), 2);
-        let rendered = super::render_event(&plan.template, &plan.batches[0], "9", 4).unwrap();
-        let value: Value = serde_json::from_str(&rendered).unwrap();
-        assert_eq!(value["name"], "Microsoft.XboxLive.T226038481.RecordScore");
-        assert!(super::event_plan(226038481, "999999").is_err());
+        assert_eq!(
+            value["data"]["baseData"]["properties"]["RecordScore"],
+            100000
+        );
     }
 }
