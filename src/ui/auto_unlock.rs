@@ -770,10 +770,12 @@ impl KilogApp {
             self.auto.error = Some("Sign in on Home to unlock achievements.".into());
             return;
         };
-        let Some(authorization) = self.xbox.as_ref().map(|xbox| xbox.authorization.clone()) else {
+        let Some(xbox) = self.xbox.as_ref() else {
             self.auto.error = Some("Xbox authorization is not ready.".into());
             return;
         };
+        let authorization = xbox.authorization.clone();
+        let events_token = xbox.events_token.clone();
         let language = crate::xbox::titles::accept_language(self.config.force_region);
         let delays = self.config.randomize_delays.clone();
         let use_randomized = self.config.use_randomized_delays;
@@ -791,7 +793,7 @@ impl KilogApp {
         self.auto.status = Some("Spoofing this game.".into());
         self.auto.task = Some(self.runtime.spawn(async move {
             let service_config_id = match service_config_id {
-                Some(id) => id,
+                Some(id) => Some(id),
                 None => {
                     match crate::xbox::achievements::fetch_title_achievements(
                         &authorization,
@@ -801,35 +803,56 @@ impl KilogApp {
                     )
                     .await
                     {
-                        Ok(board) => {
-                            match board.service_config_id.filter(|id| !id.trim().is_empty()) {
-                                Some(id) => id,
-                                None => {
-                                    let _ = note_tx.send(AutoNote::Failed {
-                                        id: String::new(),
-                                        message: "This title has no service config id.".into(),
-                                    });
-                                    ctx.request_repaint();
-                                    return;
-                                }
+                        Ok(board) => board.service_config_id.filter(|id| !id.trim().is_empty()),
+                        Err(err) => match crate::xbox::events::title_has_events(queue.title_id) {
+                            Ok(true) => None,
+                            Ok(false) => {
+                                let _ = note_tx.send(AutoNote::Failed {
+                                    id: String::new(),
+                                    message: err.to_string(),
+                                });
+                                ctx.request_repaint();
+                                return;
                             }
-                        }
-                        Err(err) => {
-                            let _ = note_tx.send(AutoNote::Failed {
-                                id: String::new(),
-                                message: err.to_string(),
-                            });
-                            ctx.request_repaint();
-                            return;
-                        }
+                            Err(load_err) => {
+                                let _ = note_tx.send(AutoNote::Failed {
+                                    id: String::new(),
+                                    message: load_err.to_string(),
+                                });
+                                ctx.request_repaint();
+                                return;
+                            }
+                        },
                     }
                 }
             };
+            if service_config_id.is_none() {
+                match crate::xbox::events::title_has_events(queue.title_id) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let _ = note_tx.send(AutoNote::Failed {
+                            id: String::new(),
+                            message: "This title has no service config id.".into(),
+                        });
+                        ctx.request_repaint();
+                        return;
+                    }
+                    Err(err) => {
+                        let _ = note_tx.send(AutoNote::Failed {
+                            id: String::new(),
+                            message: err.to_string(),
+                        });
+                        ctx.request_repaint();
+                        return;
+                    }
+                }
+            }
             run_queue(
                 queue,
                 delays,
                 use_randomized,
                 authorization,
+                events_token,
                 xuid,
                 service_config_id,
                 stop_rx,
@@ -960,8 +983,9 @@ async fn run_queue(
     delays: crate::config::DelayRandomize,
     use_randomized: bool,
     authorization: String,
+    events_token: String,
     xuid: String,
-    service_config_id: String,
+    service_config_id: Option<String>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     notes: tokio::sync::mpsc::UnboundedSender<AutoNote>,
     ctx: egui::Context,
@@ -1004,13 +1028,13 @@ async fn run_queue(
                 break;
             }
         }
-        let status = crate::xbox::achievements::update_achievement_progress(
+        let status = crate::xbox::achievements::unlock_achievement(
             &authorization,
+            &events_token,
             &xuid,
             queue.title_id,
-            &service_config_id,
+            service_config_id.as_deref(),
             &entry.id,
-            100,
         )
         .await;
         match status {

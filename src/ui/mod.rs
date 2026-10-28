@@ -71,6 +71,7 @@ pub struct KilogApp {
     achievements_page: achievements::AchievementPage,
     auto: auto_unlock::AutoUnlock,
     spoof: spoofing::SpoofState,
+    event_notice: Option<String>,
 }
 
 impl KilogApp {
@@ -110,6 +111,7 @@ impl KilogApp {
             achievements_page: achievements::AchievementPage::new(),
             auto: auto_unlock::AutoUnlock::new(),
             spoof: spoofing::SpoofState::new(),
+            event_notice: None,
         };
         match boot {
             Boot::Mock => app.apply_developer_mock(),
@@ -356,6 +358,10 @@ impl KilogApp {
             .rect_filled(bar, egui::CornerRadius::same(1), ACCENT);
 
         ui.add_space(18.0);
+        if let Some(notice) = &self.event_notice {
+            ui.label(egui::RichText::new(notice).size(14.0).color(theme::TEXT));
+            ui.add_space(12.0);
+        }
 
         if self.page == Page::Home {
             self.home_page(ui);
@@ -406,6 +412,7 @@ impl eframe::App for KilogApp {
         self.poll_auto_unlock();
         self.poll_heartbeat();
         self.ensure_titles(ctx.clone());
+        self.take_dropped_templates(ctx);
     }
 
     fn on_exit(&mut self) {
@@ -439,6 +446,66 @@ impl eframe::App for KilogApp {
                     .inner_margin(egui::Margin::same(32)),
             )
             .show(ui, |ui| self.content(ui));
+        event_drop_overlay(ui.ctx());
+    }
+}
+
+fn event_drop_overlay(ctx: &egui::Context) {
+    let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
+    if !hovering {
+        return;
+    }
+    let rect = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("event-drop"),
+    ));
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::ZERO,
+        egui::Color32::from_rgba_unmultiplied(16, 17, 20, 210),
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Drop a titleid.json to add an event-based game",
+        egui::FontId::proportional(22.0),
+        theme::TEXT,
+    );
+}
+
+impl KilogApp {
+    fn take_dropped_templates(&mut self, ctx: &egui::Context) {
+        let files = ctx.input(|input| input.raw.dropped_files.clone());
+        if files.is_empty() {
+            return;
+        }
+        let mut lines = Vec::with_capacity(files.len());
+        for file in files {
+            let name = file
+                .path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("file");
+            let bytes = match file.bytes() {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    lines.push(format!("{name}: {err}"));
+                    continue;
+                }
+            };
+            match crate::xbox::events::install_template(file.path(), &bytes) {
+                Ok(installed) if installed.in_catalog => {
+                    lines.push(format!("Added {}.", installed.title_id));
+                }
+                Ok(installed) => lines.push(format!(
+                    "Added {}, but Data.json has no entry for it.",
+                    installed.title_id
+                )),
+                Err(err) => lines.push(format!("{name}: {err}")),
+            }
+        }
+        self.event_notice = Some(lines.join("\n"));
     }
 }
 

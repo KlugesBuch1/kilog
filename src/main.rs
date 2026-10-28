@@ -50,7 +50,8 @@ fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("kilog")
             .with_inner_size([1120.0, 740.0])
-            .with_min_inner_size([860.0, 540.0]),
+            .with_min_inner_size([860.0, 540.0])
+            .with_drag_and_drop(true),
         ..Default::default()
     };
 

@@ -385,17 +385,12 @@ impl KilogApp {
         if self.achievements_page.unlocking.is_some() {
             return;
         }
-        let Some(service_config_id) = self
+        let service_config_id = self
             .achievements_page
             .board
             .as_ref()
             .and_then(|board| board.service_config_id.clone())
-            .filter(|id| !id.trim().is_empty())
-        else {
-            self.achievements_page.unlock_error =
-                Some("This title has no service config id.".into());
-            return;
-        };
+            .filter(|id| !id.trim().is_empty());
         let Some(title_id) = self
             .achievements_page
             .selected
@@ -411,10 +406,12 @@ impl KilogApp {
                 Some("Sign in on Home to unlock achievements.".into());
             return;
         };
-        let Some(authorization) = self.xbox.as_ref().map(|xbox| xbox.authorization.clone()) else {
+        let Some(xbox) = self.xbox.as_ref() else {
             self.achievements_page.unlock_error = Some("Xbox authorization is not ready.".into());
             return;
         };
+        let authorization = xbox.authorization.clone();
+        let events_token = xbox.events_token.clone();
         if let Some(task) = self.achievements_page.unlock_task.take() {
             task.abort();
         }
@@ -423,13 +420,13 @@ impl KilogApp {
         self.achievements_page.unlock_error = None;
         self.achievements_page.unlock_rx = Some(rx);
         self.achievements_page.unlock_task = Some(self.runtime.spawn(async move {
-            let status = match crate::xbox::achievements::update_achievement_progress(
+            let status = match crate::xbox::achievements::unlock_achievement(
                 &authorization,
+                &events_token,
                 &xuid,
                 title_id,
-                &service_config_id,
+                service_config_id.as_deref(),
                 &achievement_id,
-                100,
             )
             .await
             {

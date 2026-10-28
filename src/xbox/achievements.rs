@@ -320,6 +320,31 @@ pub enum ProgressStatus {
     Rejected(String),
 }
 
+pub async fn unlock_achievement(
+    authorization: &str,
+    events_token: &str,
+    xuid: &str,
+    title_id: u64,
+    service_config_id: Option<&str>,
+    achievement_id: &str,
+) -> Result<ProgressStatus, Error> {
+    if let Some(plan) = crate::xbox::events::event_plan(title_id, achievement_id)? {
+        return crate::xbox::events::send_event_plan(events_token, xuid, &plan).await;
+    }
+    let Some(service_config_id) = service_config_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(Error::Xbox("this title has no service config id".into()));
+    };
+    update_achievement_progress(
+        authorization,
+        xuid,
+        title_id,
+        service_config_id,
+        achievement_id,
+        100,
+    )
+    .await
+}
+
 pub async fn update_achievement_progress(
     authorization: &str,
     xuid: &str,
