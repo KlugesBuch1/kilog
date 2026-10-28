@@ -18,6 +18,13 @@ impl KilogApp {
             &mut self.config.force_region,
         );
         ui.add_space(8.0);
+        changed |= setting_row(
+            ui,
+            "Spoof games while on achievements page",
+            None,
+            &mut self.config.spoof_open_achievements,
+        );
+        ui.add_space(8.0);
         changed |= randomize_delays(ui, &mut self.config.randomize_delays);
 
         if changed {

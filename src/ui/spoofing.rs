@@ -36,6 +36,8 @@ pub(super) struct SpoofState {
     run: Option<HeartbeatRun>,
     retired: Vec<HeartbeatControl>,
     art_rx: Option<tokio::sync::oneshot::Receiver<SpoofArt>>,
+    page_owned: bool,
+    page_attempt: Option<u64>,
 }
 
 struct HeartbeatRun {
@@ -58,6 +60,8 @@ impl SpoofState {
             run: None,
             retired: Vec::new(),
             art_rx: None,
+            page_owned: false,
+            page_attempt: None,
         }
     }
 }
@@ -169,6 +173,47 @@ impl KilogApp {
     pub(super) fn stop_spoofing(&mut self) {
         self.halt_heartbeat();
         self.spoof.error = None;
+        self.spoof.page_owned = false;
+    }
+
+    pub(super) fn sync_achievement_spoof(&mut self, ctx: &egui::Context) {
+        let Some(title_id) = self.achievement_spoof_target() else {
+            if self.spoof.page_owned {
+                self.stop_spoofing();
+            }
+            self.spoof.page_attempt = None;
+            return;
+        };
+        if self.auto.running {
+            return;
+        }
+        if self.spoof.live && self.spoof.active_title == Some(title_id) {
+            return;
+        }
+        if self.spoof.page_attempt == Some(title_id) {
+            return;
+        }
+        if self.spoof_block_reason().is_some() {
+            return;
+        }
+        if self.spoof.live {
+            self.halt_heartbeat();
+        }
+        self.spoof.page_attempt = Some(title_id);
+        self.spoof.title_id = title_id.to_string();
+        self.start_heartbeat(ctx.clone());
+        self.spoof.page_owned = self.spoof.live;
+    }
+
+    fn achievement_spoof_target(&self) -> Option<u64> {
+        if !self.config.spoof_open_achievements || self.page != super::page::Page::Achievements {
+            return None;
+        }
+        self.achievements_page
+            .selected
+            .as_ref()
+            .and_then(|title| title.title_id.as_deref())
+            .and_then(parse_title_id)
     }
 
     fn halt_heartbeat(&mut self) {
@@ -186,6 +231,11 @@ impl KilogApp {
     }
 
     pub(super) fn begin_spoof(&mut self, ctx: egui::Context, title_id: u64) {
+        self.spoof.page_owned = false;
+        self.spoof.page_attempt = None;
+        if self.spoof.live && self.spoof.active_title != Some(title_id) {
+            self.halt_heartbeat();
+        }
         self.spoof.title_id = title_id.to_string();
         self.start_heartbeat(ctx);
     }

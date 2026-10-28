@@ -9,6 +9,7 @@ use crate::error::Error;
 #[serde(default)]
 pub struct AppConfig {
     pub force_region: bool,
+    pub spoof_open_achievements: bool,
     pub stop_on_spoof_fail: bool,
     pub use_randomized_delays: bool,
     pub randomize_delays: DelayRandomize,
@@ -35,6 +36,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             force_region: true,
+            spoof_open_achievements: false,
             stop_on_spoof_fail: false,
             use_randomized_delays: false,
             randomize_delays: DelayRandomize::default(),
@@ -192,6 +194,7 @@ mod tests {
     #[test]
     fn missing_settings_stay_off() {
         let config: AppConfig = serde_json::from_str(r#"{"force_region":false}"#).unwrap();
+        assert!(!config.spoof_open_achievements);
         assert!(!config.stop_on_spoof_fail);
         assert!(!config.use_randomized_delays);
         assert!(!config.randomize_delays.over_1_min.enabled);
