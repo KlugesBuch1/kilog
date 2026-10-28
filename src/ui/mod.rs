@@ -152,10 +152,6 @@ impl KilogApp {
         self.restoring = false;
     }
 
-    pub fn xbox_authorization(&self) -> Option<&XboxAuthorization> {
-        self.xbox.as_ref()
-    }
-
     pub(super) fn start_login(&mut self, ctx: egui::Context) {
         self.cancel_restore();
 

@@ -33,7 +33,6 @@ enum AutoNote {
 }
 
 pub(super) struct AutoUnlock {
-    pub reference_open: bool,
     pub title_id: String,
     pub gamertag: String,
     pub delays_open: bool,
@@ -56,7 +55,6 @@ pub(super) struct AutoUnlock {
 impl AutoUnlock {
     pub(super) fn new() -> Self {
         Self {
-            reference_open: false,
             title_id: String::new(),
             gamertag: String::new(),
             delays_open: false,
@@ -362,11 +360,6 @@ impl KilogApp {
         }
     }
 
-    pub(super) fn draw_auto_windows(&mut self, ctx: &egui::Context) {
-        self.reference_window(ctx);
-        self.delays_window(ctx);
-    }
-
     pub(super) fn poll_auto_unlock(&mut self) {
         self.poll_reference();
         let notes = {
@@ -426,53 +419,6 @@ impl KilogApp {
         self.auto.status = None;
         if let Err(err) = self.persist_queue() {
             self.auto.error = Some(err);
-        }
-    }
-
-    fn reference_window(&mut self, ctx: &egui::Context) {
-        if !self.auto.reference_open {
-            return;
-        }
-        let mut open = true;
-        let mut submit = false;
-        egui::Window::new("Reference gamertag")
-            .open(&mut open)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.set_min_width(320.0);
-                ui.label(
-                    egui::RichText::new(
-                        "Copy unlock times for achievements you have not unlocked yet.",
-                    )
-                    .size(13.0)
-                    .color(MUTED),
-                );
-                ui.add_space(8.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.auto.gamertag)
-                        .hint_text("Gamertag")
-                        .desired_width(280.0),
-                );
-                ui.add_space(8.0);
-                if self.auto.fetching {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(
-                            egui::RichText::new("Building queue…")
-                                .size(13.0)
-                                .color(MUTED),
-                        );
-                    });
-                } else if tool_button(ui, "Build queue", !self.auto.gamertag.trim().is_empty())
-                    .clicked()
-                {
-                    submit = true;
-                }
-            });
-        self.auto.reference_open = open;
-        if submit {
-            let ctx = ctx.clone();
-            self.fetch_reference(ctx);
         }
     }
 
@@ -793,7 +739,6 @@ impl KilogApp {
                 self.auto.gamertag = queue.gamertag.clone();
                 self.auto.queue = Some(queue);
                 self.auto.error = None;
-                self.auto.reference_open = false;
                 if !self.auto.running {
                     self.auto.status = Some(format!("Saved {count} unlocks to queue.json"));
                 }

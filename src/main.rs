@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Kilog")
+            .with_title("kilog")
             .with_inner_size([1120.0, 740.0])
             .with_min_inner_size([860.0, 540.0]),
         ..Default::default()

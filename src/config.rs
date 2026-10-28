@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(default)]
 pub struct AppConfig {
     pub force_region: bool,
     pub stop_on_spoof_fail: bool,
@@ -15,7 +15,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(default)]
 pub struct DelayRandomize {
     pub over_1_min: DelayBand,
     pub over_10_min: DelayBand,
@@ -24,7 +24,7 @@ pub struct DelayRandomize {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(default)]
 pub struct DelayBand {
     pub enabled: bool,
     pub min: u64,
@@ -172,7 +172,7 @@ impl AppConfig {
 pub fn kilog_dir() -> Result<PathBuf, Error> {
     let dirs = directories::UserDirs::new().ok_or(Error::NoDocuments)?;
     let docs = dirs.document_dir().ok_or(Error::NoDocuments)?;
-    Ok(docs.join("Kilog"))
+    Ok(docs.join("kilog"))
 }
 
 pub fn config_path() -> Result<PathBuf, Error> {
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn missing_settings_stay_off() {
-        let config: AppConfig = serde_json::from_str(r#"{"force-region":false}"#).unwrap();
+        let config: AppConfig = serde_json::from_str(r#"{"force_region":false}"#).unwrap();
         assert!(!config.stop_on_spoof_fail);
         assert!(!config.use_randomized_delays);
         assert!(!config.randomize_delays.over_1_min.enabled);

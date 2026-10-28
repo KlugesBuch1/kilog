@@ -1,4 +1,4 @@
-# Kilog
+# kilog
 
 Achievement Unlocker for Xbox & PC Games.
 
@@ -38,4 +38,4 @@ The executable is `target\release\kilog.exe`.
 
 ## License
 
-[GPL-3.0](LICENSE). If you distribute Kilog or changes to it, you must share the source under the same license.
+[GPL-3.0](LICENSE). If you distribute kilog or changes to it, you must share the source under the same license.
