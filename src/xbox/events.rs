@@ -114,6 +114,26 @@ fn validate_template(bytes: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+pub(crate) fn missing_event_support(title_id: u64) -> Result<Option<&'static str>, Error> {
+    let Some(database) = database()? else {
+        return Ok(support_gap(false, false));
+    };
+    let in_catalog = extract_title(&database.data, title_id).is_some();
+    let has_template = database.dir.join(format!("{title_id}.json")).is_file();
+    Ok(support_gap(has_template, in_catalog))
+}
+
+fn support_gap(has_template: bool, in_catalog: bool) -> Option<&'static str> {
+    match (has_template, in_catalog) {
+        (true, true) => None,
+        (false, false) => {
+            Some("This event-based game is not supported.")
+        }
+        (false, true) => Some("This event-based game has no event template file."),
+        (true, false) => Some("This event-based game has no data entry."),
+    }
+}
+
 pub(crate) fn title_has_events(title_id: u64) -> Result<bool, Error> {
     let Some(database) = database()? else {
         return Ok(false);
@@ -471,6 +491,14 @@ mod tests {
     use crate::xbox::achievements::ProgressStatus;
     use serde_json::Value;
     use std::time::Duration;
+
+    #[test]
+    fn support_gap_requires_both_files() {
+        assert!(super::support_gap(true, true).is_none());
+        assert!(super::support_gap(false, false).unwrap().contains("Data.json"));
+        assert!(super::support_gap(false, true).unwrap().contains("template"));
+        assert!(super::support_gap(true, false).unwrap().contains("Data.json"));
+    }
 
     #[test]
     fn template_names_are_title_ids() {

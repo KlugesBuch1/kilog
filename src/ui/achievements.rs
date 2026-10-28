@@ -3,7 +3,9 @@ use egui_lucide::Lucide;
 
 use super::KilogApp;
 use super::theme::{ACCENT, MUTED, TEXT};
-use crate::xbox::achievements::{Achievement, ProgressState, ProgressStatus, TitleAchievements};
+use crate::xbox::achievements::{
+    Achievement, ProgressState, ProgressStatus, TitleAchievements, UnlockStyle,
+};
 use crate::xbox::titles::{Title, TitleLookup, parse_title_id, single_title_id};
 
 const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
@@ -15,6 +17,7 @@ struct GameLoad {
     title_id: u64,
     title: Option<Box<Title>>,
     achievements: Result<TitleAchievements, String>,
+    style: Result<UnlockStyle, String>,
 }
 
 enum BodyAction {
@@ -73,6 +76,7 @@ pub(super) struct AchievementPage {
     loading: bool,
     unlocking: Option<String>,
     unlock_error: Option<String>,
+    event_block: Option<String>,
     unlock_rx: Option<tokio::sync::oneshot::Receiver<(String, ProgressStatus)>>,
     unlock_task: Option<tokio::task::JoinHandle<()>>,
     rx: Option<tokio::sync::oneshot::Receiver<(u64, GameLoad)>>,
@@ -95,6 +99,7 @@ impl AchievementPage {
             loading: false,
             unlocking: None,
             unlock_error: None,
+            event_block: None,
             unlock_rx: None,
             unlock_task: None,
             rx: None,
@@ -121,6 +126,7 @@ impl AchievementPage {
         }
         self.unlock_rx = None;
         self.unlocking = None;
+        self.event_block = None;
         self.epoch = self.epoch.wrapping_add(1);
     }
 
@@ -174,7 +180,7 @@ impl KilogApp {
                 if got != epoch {
                     return;
                 }
-                self.apply_game(load.title_id, load.title, load.achievements);
+                self.apply_game(load.title_id, load.title, load.achievements, load.style);
             }
             Err(()) => {
                 if loading {
@@ -261,6 +267,7 @@ impl KilogApp {
         let mut list_query = self.achievements_page.list_query.clone();
         let unlocking = self.achievements_page.unlocking.clone();
         let unlock_error = self.achievements_page.unlock_error.clone();
+        let event_block = self.achievements_page.event_block.clone();
         let mut retry = false;
         let mut unlock = None;
         let mut next_filter = filter;
@@ -273,6 +280,7 @@ impl KilogApp {
                 &mut list_query,
                 unlocking.as_deref(),
                 unlock_error.as_deref(),
+                event_block.as_deref(),
             );
             next_filter = filter;
             unlock = clicked;
@@ -382,7 +390,8 @@ impl KilogApp {
     }
 
     fn spawn_unlock(&mut self, ctx: egui::Context, achievement_id: String) {
-        if self.achievements_page.unlocking.is_some() {
+        if self.achievements_page.unlocking.is_some() || self.achievements_page.event_block.is_some()
+        {
             return;
         }
         let service_config_id = self
@@ -505,9 +514,10 @@ impl KilogApp {
         let language = crate::xbox::titles::accept_language(self.config.force_region);
         let (epoch, tx) = self.achievements_page.begin();
         self.achievements_page.task = Some(self.runtime.spawn(async move {
-            let (title, achievements) = if lookup {
+            let style = crate::xbox::achievements::fetch_unlock_style(&authorization, &xuid, title_id);
+            let (title, achievements, style) = if lookup {
                 let title_ids = [title_id];
-                let (found, achievements) = tokio::join!(
+                let (found, achievements, style) = tokio::join!(
                     crate::xbox::titles::lookup_titles(&authorization, &title_ids, &language),
                     crate::xbox::achievements::fetch_title_achievements(
                         &authorization,
@@ -515,20 +525,23 @@ impl KilogApp {
                         title_id,
                         &language,
                     ),
+                    style,
                 );
                 let achievements = achievements.map_err(|err| err.to_string());
                 let title = title_from_lookup(title_id, found, achievements.as_ref().ok());
-                (Some(Box::new(title)), achievements)
+                (Some(Box::new(title)), achievements, style)
             } else {
-                let achievements = crate::xbox::achievements::fetch_title_achievements(
-                    &authorization,
-                    &xuid,
-                    title_id,
-                    &language,
-                )
-                .await
-                .map_err(|err| err.to_string());
-                (None, achievements)
+                let (achievements, style) = tokio::join!(
+                    crate::xbox::achievements::fetch_title_achievements(
+                        &authorization,
+                        &xuid,
+                        title_id,
+                        &language,
+                    ),
+                    style,
+                );
+                let achievements = achievements.map_err(|err| err.to_string());
+                (None, achievements, style)
             };
             let _ = tx.send((
                 epoch,
@@ -536,6 +549,7 @@ impl KilogApp {
                     title_id,
                     title,
                     achievements,
+                    style: style.map_err(|err| err.to_string()),
                 },
             ));
             ctx.request_repaint();
@@ -547,6 +561,7 @@ impl KilogApp {
         title_id: u64,
         title: Option<Box<Title>>,
         achievements: Result<TitleAchievements, String>,
+        style: Result<UnlockStyle, String>,
     ) {
         let current = self
             .achievements_page
@@ -575,6 +590,7 @@ impl KilogApp {
                 );
                 self.achievements_page.board = Some(board);
                 self.achievements_page.board_error = None;
+                self.achievements_page.event_block = event_block(title_id, &style);
                 self.load_saved_queue(title_id);
             }
             Err(err) => {
@@ -627,6 +643,16 @@ fn is_placeholder_name(title: &Title) -> bool {
     }
 }
 
+fn event_block(title_id: u64, style: &Result<UnlockStyle, String>) -> Option<String> {
+    if !matches!(style, Ok(UnlockStyle::Event)) {
+        return None;
+    }
+    match crate::xbox::events::missing_event_support(title_id) {
+        Ok(message) => message.map(str::to_owned),
+        Err(err) => Some(err.to_string()),
+    }
+}
+
 fn paint_board(
     ui: &mut egui::Ui,
     title: &Title,
@@ -635,16 +661,24 @@ fn paint_board(
     list_query: &mut String,
     unlocking: Option<&str>,
     unlock_error: Option<&str>,
+    event_block: Option<&str>,
 ) -> (AchievementFilter, Option<String>) {
     game_header(ui, title, Some(board));
     ui.add_space(10.0);
     let filter = filter_row(ui, filter, list_query);
-    if let Some(err) = unlock_error {
+    if let Some(err) = event_block.or(unlock_error) {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(err).size(13.0).color(ERROR));
     }
     ui.add_space(8.0);
-    let unlock = achievement_list(ui, board, filter, list_query, unlocking);
+    let unlock = achievement_list(
+        ui,
+        board,
+        filter,
+        list_query,
+        unlocking,
+        event_block.is_none(),
+    );
     (filter, unlock)
 }
 
@@ -834,6 +868,7 @@ fn achievement_list(
     filter: AchievementFilter,
     list_query: &str,
     unlocking: Option<&str>,
+    unlocks_enabled: bool,
 ) -> Option<String> {
     let needle = list_query.trim().to_lowercase();
     let matched: Vec<&Achievement> = board
@@ -868,7 +903,7 @@ fn achievement_list(
                         let index = row * cols + col;
                         if let Some(achievement) = matched.get(index) {
                             let pending = unlocking == Some(achievement.id.as_str());
-                            if achievement_card(ui, achievement, card_w, pending) {
+                            if achievement_card(ui, achievement, card_w, pending, unlocks_enabled) {
                                 unlock = Some(achievement.id.clone());
                             }
                         }
@@ -904,6 +939,7 @@ fn achievement_card(
     achievement: &Achievement,
     card_w: f32,
     pending: bool,
+    unlocks_enabled: bool,
 ) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, CARD_H), egui::Sense::hover());
     let unlocked = achievement.is_unlocked();
@@ -1005,9 +1041,13 @@ fn achievement_card(
         let click = ui.interact(
             button,
             ui.id().with(("unlock", &achievement.id)),
-            egui::Sense::click(),
+            if unlocks_enabled {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
         );
-        let fill = if pending {
+        let fill = if pending || !unlocks_enabled {
             Color32::from_rgb(46, 49, 58)
         } else if click.hovered() {
             ACCENT.gamma_multiply(1.12)
@@ -1021,12 +1061,12 @@ fn achievement_card(
             egui::Align2::CENTER_CENTER,
             if pending { "..." } else { "Unlock" },
             egui::FontId::proportional(12.0),
-            if pending { MUTED } else { TEXT },
+            if pending || !unlocks_enabled { MUTED } else { TEXT },
         );
-        if click.hovered() && !pending {
+        if click.hovered() && !pending && unlocks_enabled {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        unlock = click.clicked() && !pending;
+        unlock = unlocks_enabled && click.clicked() && !pending;
     }
 
     response.on_hover_text(hover_text(achievement));
