@@ -21,6 +21,10 @@ const CHUNK: usize = 1024 * 1024;
 
 const APP_TOKEN_MISSING: &str = "Could not read the Xbox PC app authorization. Open and sign in to the Xbox app, then try again.";
 
+pub(crate) fn xbox_app_is_open() -> Result<bool, Error> {
+    Ok(!xbox_app_pids()?.is_empty())
+}
+
 pub fn read_xbox_app_authorization() -> Result<String, Error> {
     let started = std::time::Instant::now();
     let pids = xbox_app_pids()?;

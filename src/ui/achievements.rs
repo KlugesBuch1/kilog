@@ -267,6 +267,14 @@ impl KilogApp {
         let Some(title) = self.achievements_page.selected.clone() else {
             return None;
         };
+        if let Some((text, color)) = self.achievement_spoof_status() {
+            if self.achievement_spoof_awaits_app() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(2));
+            }
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new(text).size(14.0).color(color));
+        }
         ui.add_space(16.0);
         let loading = self.achievements_page.loading;
         let error = self.achievements_page.board_error.clone();

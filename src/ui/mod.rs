@@ -456,6 +456,7 @@ impl eframe::App for KilogApp {
         self.poll_achievements();
         self.poll_auto_unlock();
         self.poll_heartbeat();
+        self.watch_xbox_app(ctx);
         self.sync_achievement_spoof(ctx);
         self.ensure_titles(ctx.clone());
         self.take_dropped_templates(ctx);

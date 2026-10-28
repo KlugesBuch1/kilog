@@ -38,6 +38,11 @@ pub(super) struct SpoofState {
     art_rx: Option<tokio::sync::oneshot::Receiver<SpoofArt>>,
     page_owned: bool,
     page_attempt: Option<u64>,
+    needs_app_check: bool,
+    app_open: Option<bool>,
+    app_checked_at: Option<Instant>,
+    app_generation: u64,
+    app_rx: Option<(u64, tokio::sync::oneshot::Receiver<Result<bool, String>>)>,
 }
 
 struct HeartbeatRun {
@@ -62,6 +67,11 @@ impl SpoofState {
             art_rx: None,
             page_owned: false,
             page_attempt: None,
+            needs_app_check: false,
+            app_open: None,
+            app_checked_at: None,
+            app_generation: 0,
+            app_rx: None,
         }
     }
 }
@@ -174,6 +184,134 @@ impl KilogApp {
         self.halt_heartbeat();
         self.spoof.error = None;
         self.spoof.page_owned = false;
+        self.clear_app_check();
+    }
+
+    pub(super) fn watch_xbox_app(&mut self, ctx: &egui::Context) {
+        self.poll_app_check();
+        let Some(title_id) = self.achievement_spoof_target() else {
+            return;
+        };
+        let failed = self.spoof.needs_app_check
+            && !self.spoof.live
+            && self.spoof.error.is_some()
+            && self.spoof.page_attempt == Some(title_id);
+        if !failed || self.spoof.app_rx.is_some() {
+            return;
+        }
+        let due = match (self.spoof.app_open, self.spoof.app_checked_at) {
+            (None, None) => true,
+            (Some(false), Some(checked)) => checked.elapsed() >= Duration::from_secs(2),
+            _ => false,
+        };
+        if due {
+            self.queue_xbox_app_check(ctx.clone());
+        }
+    }
+
+    pub(super) fn achievement_spoof_awaits_app(&self) -> bool {
+        self.spoof.app_open == Some(false) && !self.spoof.live
+    }
+
+    pub(super) fn achievement_spoof_status(&self) -> Option<(String, Color32)> {
+        if !self.config.spoof_open_achievements {
+            return None;
+        }
+        let title_id = self
+            .achievements_page
+            .selected
+            .as_ref()
+            .and_then(|title| title.title_id.as_deref())
+            .and_then(parse_title_id)?;
+        let relevant = self.spoof.active_title == Some(title_id)
+            || self.spoof.page_attempt == Some(title_id);
+        if !relevant {
+            return None;
+        }
+        let prompt = self.spoof.app_open == Some(false) && !self.spoof.live;
+        if let Some(code) = self.spoof.code {
+            let ok = (200..300).contains(&code);
+            let text = if prompt {
+                format!("Spoof HTTP {code} · Open the Xbox app to spoof this game.")
+            } else {
+                format!("Spoof HTTP {code}")
+            };
+            let color = if prompt {
+                Color32::from_rgb(232, 186, 96)
+            } else if ok {
+                TEXT
+            } else {
+                Color32::from_rgb(232, 120, 128)
+            };
+            return Some((text, color));
+        }
+        if prompt {
+            return Some((
+                "Open the Xbox app to spoof this game.".into(),
+                Color32::from_rgb(232, 186, 96),
+            ));
+        }
+        if self.spoof.live {
+            return Some(("Spoofing…".into(), MUTED));
+        }
+        self.spoof
+            .error
+            .as_ref()
+            .map(|err| (err.clone(), Color32::from_rgb(232, 120, 128)))
+    }
+
+    fn queue_xbox_app_check(&mut self, ctx: egui::Context) {
+        let generation = self.spoof.app_generation;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.spoof.app_rx = Some((generation, rx));
+        self.runtime.spawn(async move {
+            let open = tokio::task::spawn_blocking(crate::xbox::xbox_app_is_open)
+                .await
+                .map_err(|err| err.to_string())
+                .and_then(|result| result.map_err(|err| err.to_string()));
+            let _ = tx.send(open);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_app_check(&mut self) {
+        let ready = self.spoof.app_rx.as_mut().and_then(|(generation, rx)| {
+            let generation = *generation;
+            match rx.try_recv() {
+                Ok(result) => Some((generation, Ok(result))),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Some((generation, Err(())))
+                }
+            }
+        });
+        let Some((generation, result)) = ready else {
+            return;
+        };
+        self.spoof.app_rx = None;
+        if generation != self.spoof.app_generation || self.spoof.live {
+            return;
+        }
+        self.spoof.app_checked_at = Some(Instant::now());
+        let Ok(Ok(open)) = result else {
+            return;
+        };
+        let resumed = self.spoof.app_open == Some(false) && open;
+        self.spoof.app_open = Some(open);
+        if resumed {
+            self.spoof.needs_app_check = false;
+            self.spoof.page_attempt = None;
+            self.spoof.error = None;
+            self.spoof.code = None;
+        }
+    }
+
+    fn clear_app_check(&mut self) {
+        self.spoof.needs_app_check = false;
+        self.spoof.app_open = None;
+        self.spoof.app_checked_at = None;
+        self.spoof.app_generation = self.spoof.app_generation.wrapping_add(1);
+        self.spoof.app_rx = None;
     }
 
     pub(super) fn sync_achievement_spoof(&mut self, ctx: &egui::Context) {
@@ -278,6 +416,7 @@ impl KilogApp {
             return;
         }
         self.halt_heartbeat();
+        self.clear_app_check();
         self.spoof.code = None;
         let wake_ctx = ctx.clone();
         let control = spawn_heartbeat(
@@ -377,6 +516,9 @@ impl KilogApp {
                     if let Some(code) = code {
                         self.spoof.code = Some(code);
                     }
+                    self.spoof.needs_app_check = true;
+                    self.spoof.app_open = None;
+                    self.spoof.app_checked_at = None;
                     *failed = Some(message);
                 }
             }
