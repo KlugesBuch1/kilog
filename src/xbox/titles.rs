@@ -459,6 +459,8 @@ const CATALOG_SEARCH_URL: &str = "https://dbox.tools/api/title_ids/";
 pub struct CatalogPage {
     pub titles: Vec<Title>,
     pub total: usize,
+    pub next_offset: usize,
+    pub exhausted: bool,
 }
 
 pub fn single_title_id(query: &str) -> Option<u64> {
@@ -470,16 +472,75 @@ pub fn single_title_id(query: &str) -> Option<u64> {
     if ids.len() == 1 { ids.pop() } else { None }
 }
 
+const CATALOG_SCAN_SIZE: usize = 50;
+const CATALOG_SCAN_REQUESTS: usize = 10;
+
 pub async fn search_catalog(name: &str, offset: usize) -> Result<CatalogPage, Error> {
     let name = name.trim();
     if name.is_empty() {
         return Err(Error::Xbox("search text is empty".into()));
     }
-    let limit = CATALOG_PAGE_SIZE.to_string();
-    let offset_text = offset.to_string();
-    let response = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .build()?
+        .build()?;
+    let mut api_offset = offset;
+    let mut matched = Vec::new();
+    let mut known_total = offset;
+    for _ in 0..CATALOG_SCAN_REQUESTS {
+        let page = fetch_catalog_page(&client, name, api_offset, CATALOG_SCAN_SIZE).await?;
+        if page.titles.is_empty() {
+            return Ok(finished_page(matched, api_offset));
+        }
+        let start = api_offset;
+        let batch = page.titles.len();
+        let total = page.total.max(start + batch);
+        known_total = total;
+        for (index, title) in page.titles.into_iter().enumerate() {
+            if !is_listed_game(&title) {
+                continue;
+            }
+            matched.push(title);
+            if matched.len() == CATALOG_PAGE_SIZE {
+                let next_offset = start + index + 1;
+                return Ok(CatalogPage {
+                    titles: matched,
+                    total,
+                    next_offset,
+                    exhausted: next_offset >= total,
+                });
+            }
+        }
+        api_offset = start + batch;
+        if api_offset >= total {
+            return Ok(finished_page(matched, api_offset));
+        }
+    }
+    Ok(CatalogPage {
+        titles: matched,
+        total: known_total,
+        next_offset: api_offset,
+        exhausted: api_offset >= known_total,
+    })
+}
+
+fn finished_page(titles: Vec<Title>, next_offset: usize) -> CatalogPage {
+    CatalogPage {
+        titles,
+        total: next_offset,
+        next_offset,
+        exhausted: true,
+    }
+}
+
+async fn fetch_catalog_page(
+    client: &reqwest::Client,
+    name: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<CatalogPage, Error> {
+    let limit = limit.to_string();
+    let offset_text = offset.to_string();
+    let response = client
         .get(CATALOG_SEARCH_URL)
         .header("Accept", "application/json")
         .query(&[
@@ -495,7 +556,26 @@ pub async fn search_catalog(name: &str, offset: usize) -> Result<CatalogPage, Er
         let snippet: String = body.chars().take(180).collect();
         return Err(Error::Xbox(format!("title search {status}: {snippet}")));
     }
-    parse_catalog_page(&body)
+    let mut page = parse_catalog_page(&body)?;
+    page.next_offset = offset + page.titles.len();
+    page.exhausted = page.total > 0 && page.next_offset >= page.total;
+    Ok(page)
+}
+
+fn is_listed_game(title: &Title) -> bool {
+    on_modern_platforms(title) && has_live_identity(title)
+}
+
+fn on_modern_platforms(title: &Title) -> bool {
+    title
+        .devices
+        .iter()
+        .any(|device| matches!(device.as_str(), "Xbox One" | "Xbox Series" | "PC"))
+}
+
+fn has_live_identity(title: &Title) -> bool {
+    let present = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.is_empty());
+    present(&title.service_config_id) || present(&title.pfn) || present(&title.bing_id)
 }
 
 pub async fn search_catalog_with_art(
@@ -615,6 +695,8 @@ fn parse_catalog_page(body: &str) -> Result<CatalogPage, Error> {
     Ok(CatalogPage {
         titles,
         total: body.count,
+        next_offset: 0,
+        exhausted: false,
     })
 }
 
@@ -630,7 +712,7 @@ fn catalog_system(raw: &str) -> String {
     match raw.to_ascii_uppercase().as_str() {
         "XBOXONE" => "Xbox One".to_owned(),
         "XBOX360" | "XBOX_360" => "Xbox 360".to_owned(),
-        "XBOXSERIES" | "XBOXSERIESX" | "XBOX_SERIES" => "Xbox Series".to_owned(),
+        "XBOXSERIES" | "XBOXSERIESX" | "XBOXSERIESXS" | "XBOX_SERIES" => "Xbox Series".to_owned(),
         "PC" | "WIN32" => "PC".to_owned(),
         _ => raw.to_owned(),
     }
@@ -898,5 +980,43 @@ fn reconcile_lookup(requested: &[u64], titles: Vec<Title>) -> TitleLookup {
     TitleLookup {
         titles: ordered,
         missing,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_search_drops_store_clones_without_live_identity() {
+        let body = r#"{
+            "count": 2,
+            "items": [
+                {
+                    "title_id": "6C81C961",
+                    "name": "Minions Jigsaw puzzle",
+                    "systems": ["XBOXONE", "PC"],
+                    "bing_id": null,
+                    "service_config_id": null,
+                    "pfn": null
+                },
+                {
+                    "title_id": "6ADC6BE5",
+                    "name": "Balatro",
+                    "systems": ["XBOXONE", "XBOXSERIESXS", "PC"],
+                    "bing_id": null,
+                    "service_config_id": "00000000-0000-0000-0000-00006adc6be5",
+                    "pfn": "PlayStack.Balatro_3wcqaesafpzfy"
+                }
+            ]
+        }"#;
+        let page = parse_catalog_page(body).unwrap();
+        let names: Vec<_> = page
+            .titles
+            .iter()
+            .filter(|title| is_listed_game(title))
+            .filter_map(|title| title.name.clone())
+            .collect();
+        assert_eq!(names, vec!["Balatro".to_owned()]);
     }
 }

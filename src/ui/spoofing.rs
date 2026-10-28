@@ -223,8 +223,8 @@ impl KilogApp {
             .as_ref()
             .and_then(|title| title.title_id.as_deref())
             .and_then(parse_title_id)?;
-        let relevant = self.spoof.active_title == Some(title_id)
-            || self.spoof.page_attempt == Some(title_id);
+        let relevant =
+            self.spoof.active_title == Some(title_id) || self.spoof.page_attempt == Some(title_id);
         if !relevant {
             return None;
         }

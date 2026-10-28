@@ -29,6 +29,8 @@ pub(super) struct TitleSearch {
     fetched: usize,
     shown: usize,
     total: usize,
+    api_offset: usize,
+    catalog_done: bool,
     exact: bool,
     pending: bool,
     loading_more: bool,
@@ -61,6 +63,8 @@ impl TitleSearch {
             fetched: 0,
             shown: BATCH,
             total: 0,
+            api_offset: 0,
+            catalog_done: true,
             exact: false,
             pending: false,
             loading_more: false,
@@ -88,6 +92,8 @@ impl TitleSearch {
         self.fetched = 0;
         self.shown = BATCH;
         self.total = 0;
+        self.api_offset = 0;
+        self.catalog_done = true;
         self.exact = false;
         self.missing = false;
         self.error = None;
@@ -115,14 +121,14 @@ impl TitleSearch {
     }
 
     fn has_more(&self) -> bool {
-        !self.exact && self.total > 0 && self.fetched < self.total
+        !self.exact && !self.catalog_done && self.error.is_none()
     }
 
     fn can_reveal_more(&self) -> bool {
-        if self.exact {
+        if self.exact || self.error.is_some() {
             return false;
         }
-        self.shown < self.results.len() || self.fetched < self.total
+        self.shown < self.results.len() || !self.catalog_done
     }
 }
 
@@ -155,6 +161,8 @@ impl KilogApp {
             self.title_search.fetched = 0;
             self.title_search.shown = BATCH;
             self.title_search.total = 0;
+            self.title_search.api_offset = 0;
+            self.title_search.catalog_done = true;
             self.title_search.exact = false;
             self.title_search.missing = false;
             self.title_search.error = None;
@@ -169,7 +177,7 @@ impl KilogApp {
         let query = self.title_search.query.trim().to_owned();
         if query.is_empty() {
             ui.label(
-                egui::RichText::new("Search Xbox Live by name or Title ID.")
+                egui::RichText::new("Search games by name or Title ID.")
                     .size(15.0)
                     .color(MUTED),
             );
@@ -372,10 +380,12 @@ impl KilogApp {
                     self.title_search.without_cover.clear();
                     self.title_search.fetched = 0;
                 }
+                self.title_search.api_offset = page.next_offset;
+                self.title_search.catalog_done = page.exhausted;
                 if page.titles.is_empty() {
-                    self.title_search.fetched =
-                        self.title_search.total.max(self.title_search.fetched);
-                    self.finish_catalog();
+                    if page.exhausted {
+                        self.finish_catalog();
+                    }
                     return;
                 }
                 self.title_search.fetched += page.titles.len();
@@ -386,8 +396,7 @@ impl KilogApp {
                         self.title_search.without_cover.push(title);
                     }
                 }
-                self.title_search.total = page.total.max(self.title_search.fetched);
-                if self.title_search.fetched >= self.title_search.total {
+                if page.exhausted {
                     self.finish_catalog();
                 } else {
                     self.title_search.missing = false;
@@ -408,11 +417,11 @@ impl KilogApp {
     }
 
     fn finish_catalog(&mut self) {
+        self.title_search.catalog_done = true;
         let held = std::mem::take(&mut self.title_search.without_cover);
         self.title_search.results.extend(held);
-        if self.title_search.total < self.title_search.fetched {
-            self.title_search.total = self.title_search.fetched;
-        }
+        self.title_search.total = self.title_search.results.len();
+        self.title_search.fetched = self.title_search.total;
         self.title_search.missing = self.title_search.results.is_empty();
         self.title_search.error = None;
     }
@@ -431,6 +440,8 @@ impl KilogApp {
         self.title_search.fetched = 0;
         self.title_search.shown = BATCH;
         self.title_search.total = 0;
+        self.title_search.api_offset = 0;
+        self.title_search.catalog_done = false;
         self.title_search.missing = false;
         self.title_search.error = None;
         if let Some(title_id) = single_title_id(&query) {
@@ -466,7 +477,7 @@ impl KilogApp {
             return;
         }
         let query = self.title_search.searched.clone();
-        let offset = self.title_search.fetched;
+        let offset = self.title_search.api_offset;
         self.spawn_catalog_page(ctx, query, offset);
     }
 
