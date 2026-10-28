@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::kilog_dir;
@@ -61,11 +63,13 @@ pub fn build_queue(
     gamertag: &str,
     local: &TitleAchievements,
     reference: &TitleAchievements,
+    supported: Option<&HashSet<String>>,
 ) -> UnlockQueue {
-    let locked: std::collections::HashSet<&str> = local
+    let locked: HashSet<&str> = local
         .achievements
         .iter()
         .filter(|achievement| !achievement.is_unlocked())
+        .filter(|achievement| supported.is_none_or(|ids| ids.contains(achievement.id.as_str())))
         .map(|achievement| achievement.id.as_str())
         .collect();
     let mut theirs: Vec<(&str, &str, &str)> = reference
@@ -119,6 +123,63 @@ fn unix_seconds(raw: &str) -> Option<i64> {
     let second: u32 = raw.get(17..19)?.parse().ok()?;
     let days = days_from_civil(year, month, day)?;
     Some(days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60 + i64::from(second))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::build_queue;
+    use crate::xbox::achievements::{Achievement, ProgressState, TitleAchievements};
+
+    fn achievement(id: &str, unlocked_at: Option<&str>) -> Achievement {
+        Achievement {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            description: String::new(),
+            locked_description: String::new(),
+            gamerscore: 0,
+            progress_state: if unlocked_at.is_some() {
+                ProgressState::Unlocked
+            } else {
+                ProgressState::Locked
+            },
+            in_progress: false,
+            is_secret: false,
+            rarity: None,
+            unlocked_at: unlocked_at.map(str::to_owned),
+            icon_url: None,
+        }
+    }
+
+    fn board(achievements: Vec<Achievement>) -> TitleAchievements {
+        TitleAchievements {
+            title_name: None,
+            service_config_id: None,
+            achievements,
+        }
+    }
+
+    #[test]
+    fn partial_support_keeps_supported_achievements_and_their_gaps() {
+        let local = board(vec![
+            achievement("1", None),
+            achievement("2", None),
+            achievement("3", None),
+        ]);
+        let reference = board(vec![
+            achievement("1", Some("2020-01-01T00:00:00Z")),
+            achievement("2", Some("2020-01-01T00:01:00Z")),
+            achievement("3", Some("2020-01-01T00:03:00Z")),
+        ]);
+        let supported = HashSet::from(["1".to_owned(), "3".to_owned()]);
+        let queue = build_queue(1, "ref", &local, &reference, Some(&supported));
+        assert_eq!(queue.entries.len(), 2);
+        assert_eq!(queue.entries[0].id, "1");
+        assert_eq!(queue.entries[0].delay_seconds, 0);
+        assert_eq!(queue.entries[1].id, "3");
+        assert_eq!(queue.entries[1].delay_seconds, 180);
+    }
 }
 
 fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {

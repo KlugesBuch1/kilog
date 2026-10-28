@@ -345,6 +345,24 @@ fn support_gap(has_template: bool, in_catalog: bool) -> Option<&'static str> {
     }
 }
 
+/// Achievement ids that have event data when the title is only partly supported.
+/// `None` means every achievement can be unlocked, or this is not an event title.
+pub(crate) fn partial_event_ids(title_id: u64) -> Result<Option<HashSet<String>>, Error> {
+    if missing_event_support(title_id)?.is_some() {
+        return Ok(None);
+    }
+    let mut guard = titles()?;
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if !load_title_into(cache, title_id)? {
+        return Ok(None);
+    }
+    let title = &cache[&title_id];
+    if title.fully_supported {
+        return Ok(None);
+    }
+    Ok(Some(title.achievements.keys().cloned().collect()))
+}
+
 pub(crate) fn title_has_events(title_id: u64) -> Result<bool, Error> {
     let Some(database) = database()? else {
         return Ok(false);

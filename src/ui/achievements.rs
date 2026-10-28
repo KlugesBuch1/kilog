@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui::{self, Color32};
 use egui_lucide::Lucide;
 
@@ -9,6 +11,8 @@ use crate::xbox::achievements::{
 use crate::xbox::titles::{Title, TitleLookup, parse_title_id, single_title_id};
 
 const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
+const WARN: Color32 = Color32::from_rgb(232, 186, 96);
+const PARTIAL_NOTE: &str = "This game is only partially supported. Unlock is disabled for achievements that are not supported yet.";
 const CARD_H: f32 = 76.0;
 const CARD_GAP: f32 = 8.0;
 const MIN_CARD_W: f32 = 280.0;
@@ -77,6 +81,7 @@ pub(super) struct AchievementPage {
     unlocking: Option<String>,
     unlock_error: Option<String>,
     event_block: Option<String>,
+    supported_ids: Option<HashSet<String>>,
     unlock_rx: Option<tokio::sync::oneshot::Receiver<(String, ProgressStatus)>>,
     unlock_task: Option<tokio::task::JoinHandle<()>>,
     rx: Option<tokio::sync::oneshot::Receiver<(u64, GameLoad)>>,
@@ -100,6 +105,7 @@ impl AchievementPage {
             unlocking: None,
             unlock_error: None,
             event_block: None,
+            supported_ids: None,
             unlock_rx: None,
             unlock_task: None,
             rx: None,
@@ -127,6 +133,7 @@ impl AchievementPage {
         self.unlock_rx = None;
         self.unlocking = None;
         self.event_block = None;
+        self.supported_ids = None;
         self.epoch = self.epoch.wrapping_add(1);
     }
 
@@ -268,6 +275,7 @@ impl KilogApp {
         let unlocking = self.achievements_page.unlocking.clone();
         let unlock_error = self.achievements_page.unlock_error.clone();
         let event_block = self.achievements_page.event_block.clone();
+        let supported_ids = self.achievements_page.supported_ids.clone();
         let mut retry = false;
         let mut unlock = None;
         let mut next_filter = filter;
@@ -281,6 +289,7 @@ impl KilogApp {
                 unlocking.as_deref(),
                 unlock_error.as_deref(),
                 event_block.as_deref(),
+                supported_ids.as_ref(),
             );
             next_filter = filter;
             unlock = clicked;
@@ -392,6 +401,14 @@ impl KilogApp {
     fn spawn_unlock(&mut self, ctx: egui::Context, achievement_id: String) {
         if self.achievements_page.unlocking.is_some()
             || self.achievements_page.event_block.is_some()
+        {
+            return;
+        }
+        if self
+            .achievements_page
+            .supported_ids
+            .as_ref()
+            .is_some_and(|ids| !ids.contains(&achievement_id))
         {
             return;
         }
@@ -592,12 +609,16 @@ impl KilogApp {
                 );
                 self.achievements_page.board = Some(board);
                 self.achievements_page.board_error = None;
-                self.achievements_page.event_block = event_block(title_id, &style);
+                let (block, supported) = event_limits(title_id, &style);
+                self.achievements_page.event_block = block;
+                self.achievements_page.supported_ids = supported;
                 self.load_saved_queue(title_id);
             }
             Err(err) => {
                 self.achievements_page.board = None;
                 self.achievements_page.board_error = Some(err);
+                self.achievements_page.event_block = None;
+                self.achievements_page.supported_ids = None;
             }
         }
     }
@@ -645,13 +666,20 @@ fn is_placeholder_name(title: &Title) -> bool {
     }
 }
 
-fn event_block(title_id: u64, style: &Result<UnlockStyle, String>) -> Option<String> {
+fn event_limits(
+    title_id: u64,
+    style: &Result<UnlockStyle, String>,
+) -> (Option<String>, Option<HashSet<String>>) {
     if !matches!(style, Ok(UnlockStyle::Event)) {
-        return None;
+        return (None, None);
     }
     match crate::xbox::events::missing_event_support(title_id) {
-        Ok(message) => message.map(str::to_owned),
-        Err(err) => Some(err.to_string()),
+        Ok(Some(message)) => (Some(message.to_owned()), None),
+        Ok(None) => match crate::xbox::events::partial_event_ids(title_id) {
+            Ok(ids) => (None, ids),
+            Err(err) => (Some(err.to_string()), None),
+        },
+        Err(err) => (Some(err.to_string()), None),
     }
 }
 
@@ -664,10 +692,15 @@ fn paint_board(
     unlocking: Option<&str>,
     unlock_error: Option<&str>,
     event_block: Option<&str>,
+    supported_ids: Option<&HashSet<String>>,
 ) -> (AchievementFilter, Option<String>) {
     game_header(ui, title, Some(board));
     ui.add_space(10.0);
     let filter = filter_row(ui, filter, list_query);
+    if supported_ids.is_some() {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(PARTIAL_NOTE).size(13.0).color(WARN));
+    }
     if let Some(err) = event_block.or(unlock_error) {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(err).size(13.0).color(ERROR));
@@ -680,6 +713,7 @@ fn paint_board(
         list_query,
         unlocking,
         event_block.is_none(),
+        supported_ids,
     );
     (filter, unlock)
 }
@@ -871,6 +905,7 @@ fn achievement_list(
     list_query: &str,
     unlocking: Option<&str>,
     unlocks_enabled: bool,
+    supported_ids: Option<&HashSet<String>>,
 ) -> Option<String> {
     let needle = list_query.trim().to_lowercase();
     let matched: Vec<&Achievement> = board
@@ -905,7 +940,16 @@ fn achievement_list(
                         let index = row * cols + col;
                         if let Some(achievement) = matched.get(index) {
                             let pending = unlocking == Some(achievement.id.as_str());
-                            if achievement_card(ui, achievement, card_w, pending, unlocks_enabled) {
+                            let supported = supported_ids
+                                .is_none_or(|ids| ids.contains(achievement.id.as_str()));
+                            if achievement_card(
+                                ui,
+                                achievement,
+                                card_w,
+                                pending,
+                                unlocks_enabled && supported,
+                                supported,
+                            ) {
                                 unlock = Some(achievement.id.clone());
                             }
                         }
@@ -942,6 +986,7 @@ fn achievement_card(
     card_w: f32,
     pending: bool,
     unlocks_enabled: bool,
+    supported: bool,
 ) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, CARD_H), egui::Sense::hover());
     let unlocked = achievement.is_unlocked();
@@ -1069,10 +1114,15 @@ fn achievement_card(
                 TEXT
             },
         );
-        if click.hovered() && !pending && unlocks_enabled {
+        let hovered = click.hovered();
+        let clicked = click.clicked();
+        if hovered && !pending && unlocks_enabled {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        unlock = unlocks_enabled && click.clicked() && !pending;
+        if !supported {
+            click.on_hover_text("Not supported yet");
+        }
+        unlock = unlocks_enabled && clicked && !pending;
     }
 
     response.on_hover_text(hover_text(achievement));

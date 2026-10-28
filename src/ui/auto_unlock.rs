@@ -14,6 +14,11 @@ struct ActiveWait {
     started: std::time::Instant,
 }
 
+enum BuiltQueue {
+    Ready(UnlockQueue),
+    Partial(UnlockQueue),
+}
+
 enum AutoNote {
     Waiting {
         id: String,
@@ -39,10 +44,12 @@ pub(super) struct AutoUnlock {
     delay_draft: Option<UnlockQueue>,
     skips_open: bool,
     skip_draft: Option<UnlockQueue>,
+    partial_open: bool,
+    pending_partial: Option<UnlockQueue>,
     pub queue: Option<UnlockQueue>,
     pub error: Option<String>,
     pub fetching: bool,
-    fetch_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<UnlockQueue, String>)>>,
+    fetch_rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<BuiltQueue, String>)>>,
     pub running: bool,
     spoof_halted: bool,
     active_wait: Option<ActiveWait>,
@@ -61,6 +68,8 @@ impl AutoUnlock {
             delay_draft: None,
             skips_open: false,
             skip_draft: None,
+            partial_open: false,
+            pending_partial: None,
             queue: None,
             error: None,
             fetching: false,
@@ -91,7 +100,13 @@ impl KilogApp {
         let mut skips = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            if tool_button(ui, "Build queue", !self.auto.fetching).clicked() {
+            if tool_button(
+                ui,
+                "Build queue",
+                !self.auto.fetching && !self.auto.partial_open,
+            )
+            .clicked()
+            {
                 build = true;
             }
             if tool_button(ui, "Edit delays", !self.auto.fetching).clicked() {
@@ -143,6 +158,7 @@ impl KilogApp {
         self.draw_queue_and_bar(ui);
         self.delays_window(ui.ctx());
         self.skips_window(ui.ctx());
+        self.partial_window(ui.ctx());
     }
 
     fn draw_queue_total(&mut self, ui: &mut egui::Ui) {
@@ -654,7 +670,7 @@ impl KilogApp {
 
     fn fetch_reference(&mut self, ctx: egui::Context) {
         let gamertag = self.auto.gamertag.trim().to_owned();
-        if self.auto.fetching {
+        if self.auto.fetching || self.auto.partial_open {
             return;
         }
         if gamertag.is_empty() {
@@ -684,11 +700,14 @@ impl KilogApp {
                 let style =
                     crate::xbox::achievements::fetch_unlock_style(&authorization, &xuid, title_id)
                         .await?;
-                if style == crate::xbox::achievements::UnlockStyle::Event
-                    && let Some(message) = crate::xbox::events::missing_event_support(title_id)?
-                {
-                    return Err(crate::error::Error::Xbox(message.into()));
-                }
+                let partial = if style == crate::xbox::achievements::UnlockStyle::Event {
+                    if let Some(message) = crate::xbox::events::missing_event_support(title_id)? {
+                        return Err(crate::error::Error::Xbox(message.into()));
+                    }
+                    crate::xbox::events::partial_event_ids(title_id)?
+                } else {
+                    None
+                };
                 let reference_xuid =
                     crate::xbox::profile::xuid_for_gamertag(&authorization, &gamertag).await?;
                 let reference = crate::xbox::achievements::fetch_title_achievements(
@@ -705,14 +724,20 @@ impl KilogApp {
                     &language,
                 )
                 .await?;
-                let queue = build_queue(title_id, &gamertag, &local, &reference);
+                let queue = build_queue(title_id, &gamertag, &local, &reference, partial.as_ref());
                 if queue.entries.is_empty() {
-                    return Err(crate::error::Error::Xbox(
-                        "No unlock times to copy for achievements you still have locked.".into(),
-                    ));
+                    let message = if partial.is_some() {
+                        "No supported achievements are left to copy. This game is only partially supported."
+                    } else {
+                        "No unlock times to copy for achievements you still have locked."
+                    };
+                    return Err(crate::error::Error::Xbox(message.into()));
+                }
+                if partial.is_some() {
+                    return Ok(BuiltQueue::Partial(queue));
                 }
                 save_queue(&queue)?;
-                Ok(queue)
+                Ok(BuiltQueue::Ready(queue))
             }
             .await
             .map_err(|err| err.to_string());
@@ -742,7 +767,7 @@ impl KilogApp {
             return;
         }
         match result {
-            Ok(queue) => {
+            Ok(BuiltQueue::Ready(queue)) => {
                 let count = queue.entries.len();
                 self.auto.gamertag = queue.gamertag.clone();
                 self.auto.queue = Some(queue);
@@ -751,8 +776,97 @@ impl KilogApp {
                     self.auto.status = Some(format!("Saved {count} unlocks to queue.json"));
                 }
             }
+            Ok(BuiltQueue::Partial(queue)) => {
+                self.auto.pending_partial = Some(queue);
+                self.auto.partial_open = true;
+                self.auto.error = None;
+                self.auto.status = None;
+            }
             Err(err) => self.auto.error = Some(err),
         }
+    }
+
+    fn partial_window(&mut self, ctx: &egui::Context) {
+        if !self.auto.partial_open {
+            return;
+        }
+        let pending_title = self
+            .auto
+            .pending_partial
+            .as_ref()
+            .map(|queue| queue.title_id);
+        if pending_title != parse_title_id(&self.auto.title_id) {
+            self.auto.pending_partial = None;
+            self.auto.partial_open = false;
+            return;
+        }
+        let modal = egui::Modal::new(egui::Id::new("partial_event_support")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label(
+                egui::RichText::new("This game is only partially supported")
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(
+                    "The queue will include supported achievements only. Achievements that are not supported yet are left out.",
+                )
+                .size(14.0)
+                .color(TEXT),
+            );
+            ui.add_space(14.0);
+            let mut proceed = false;
+            let mut cancel = false;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if tool_button(ui, "Continue", true).clicked() {
+                    proceed = true;
+                }
+                if tool_button(ui, "Cancel", true).clicked() {
+                    cancel = true;
+                }
+            });
+            if proceed {
+                Some(true)
+            } else if cancel {
+                Some(false)
+            } else {
+                None
+            }
+        });
+        match (modal.inner, modal.should_close()) {
+            (Some(true), _) => self.accept_partial_queue(),
+            (Some(false), _) | (None, true) => self.dismiss_partial_queue(),
+            (None, false) => {}
+        }
+    }
+
+    fn accept_partial_queue(&mut self) {
+        let Some(queue) = self.auto.pending_partial.take() else {
+            self.auto.partial_open = false;
+            return;
+        };
+        self.auto.partial_open = false;
+        let count = queue.entries.len();
+        match save_queue(&queue) {
+            Ok(()) => {
+                self.auto.gamertag = queue.gamertag.clone();
+                self.auto.queue = Some(queue);
+                self.auto.error = None;
+                if !self.auto.running {
+                    self.auto.status =
+                        Some(format!("Saved {count} supported unlocks to queue.json"));
+                }
+            }
+            Err(err) => self.auto.error = Some(err.to_string()),
+        }
+    }
+
+    fn dismiss_partial_queue(&mut self) {
+        self.auto.pending_partial = None;
+        self.auto.partial_open = false;
     }
 
     fn start_auto_unlock(&mut self, ctx: egui::Context) {
