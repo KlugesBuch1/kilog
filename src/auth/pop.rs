@@ -31,11 +31,12 @@ impl ProofSigner {
     }
 
     pub fn sign_request(&self, url: &str, body: &str) -> String {
-        self.sign_request_at(url, body, windows_timestamp_now())
+        self.sign_bytes("POST", url, body.as_bytes())
     }
 
-    fn sign_request_at(&self, url: &str, body: &str, timestamp: u64) -> String {
-        let payload = signature_payload(timestamp, &path_and_query(url), body);
+    pub fn sign_bytes(&self, method: &str, url: &str, body: &[u8]) -> String {
+        let timestamp = windows_timestamp_now();
+        let payload = signature_payload(timestamp, method, &path_and_query(url), body);
         let signature: p256::ecdsa::Signature = self.key.sign(&payload);
         let mut header = Vec::with_capacity(12 + 64);
         header.extend_from_slice(&POLICY_VERSION.to_be_bytes());
@@ -78,12 +79,32 @@ fn windows_timestamp(unix_seconds: u64) -> u64 {
         .saturating_mul(10_000_000)
 }
 
-fn signature_payload(timestamp: u64, path_and_query: &str, body: &str) -> Vec<u8> {
-    let signed = format!("POST\0{path_and_query}\0\0{body}\0");
-    let signed = signed.as_bytes();
+fn signature_payload(timestamp: u64, method: &str, path_and_query: &str, body: &[u8]) -> Vec<u8> {
+    let mut signed = format!("{method}\0{path_and_query}\0\0").into_bytes();
+    signed.extend_from_slice(body);
+    signed.push(0);
     let mut payload = vec![0u8; 14 + signed.len()];
     payload[..4].copy_from_slice(&POLICY_VERSION.to_be_bytes());
     payload[5..13].copy_from_slice(&timestamp.to_be_bytes());
-    payload[14..].copy_from_slice(signed);
+    payload[14..].copy_from_slice(&signed);
     payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signature_payload;
+
+    #[test]
+    fn signature_payload_matches_the_xbox_layout() {
+        let post = signature_payload(1, "POST", "/path", b"{}");
+        let signed = "POST\0/path\0\0{}\0";
+        let mut expected = vec![0u8; 14 + signed.len()];
+        expected[..4].copy_from_slice(&1u32.to_be_bytes());
+        expected[5..13].copy_from_slice(&1u64.to_be_bytes());
+        expected[14..].copy_from_slice(signed.as_bytes());
+        assert_eq!(post, expected);
+
+        let put = signature_payload(1, "PUT", "/users/me/gamerpic", &[1, 2, 0, 3]);
+        assert_eq!(&put[put.len() - 5..], &[1, 2, 0, 3, 0]);
+    }
 }

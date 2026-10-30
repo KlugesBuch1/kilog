@@ -1,4 +1,4 @@
-use crate::error::Error;
+﻿use crate::error::Error;
 
 #[derive(Debug, Clone)]
 pub struct PersonResponse {
@@ -116,36 +116,6 @@ fn encode_gamertag(gamertag: &str) -> String {
         }
     }
     encoded
-}
-
-pub async fn set_own_gamerpic(authorization: &str, png: &[u8]) -> Result<(), Error> {
-    if authorization.trim().is_empty() {
-        return Err(Error::Xbox("authorization is empty".into()));
-    }
-    if png.is_empty() {
-        return Err(Error::Xbox("gamerpic is empty".into()));
-    }
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?
-        .put("https://gamerpics.xboxlive.com/users/me/gamerpic")
-        .header("Authorization", authorization)
-        .header("x-xbl-contract-version", "1")
-        .header("Content-Type", "image/png")
-        .header("Accept", "application/json")
-        .body(png.to_vec())
-        .send()
-        .await?;
-    let status = response.status();
-    if matches!(status.as_u16(), 200 | 201 | 204) {
-        return Ok(());
-    }
-    let body = response.text().await.unwrap_or_default();
-    let snippet: String = body.chars().take(180).collect();
-    Err(Error::Xbox(format!(
-        "gamerpic upload returned {}: {snippet}",
-        status.as_u16()
-    )))
 }
 
 pub async fn fetch_me(authorization: &str) -> Result<PersonResponse, Error> {

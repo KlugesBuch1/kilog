@@ -4,13 +4,10 @@ use std::path::{Path, PathBuf};
 use eframe::egui::{self, Color32};
 
 use super::KilogApp;
-use super::home::AuthState;
 use super::theme::{ACCENT, MUTED, TEXT};
-use crate::xbox::profile::PersonResponse;
 
 const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-const GAMERPIC_SIZE: u32 = 1080;
 
 struct FoundPic {
     gamertag: String,
@@ -23,13 +20,11 @@ enum Busy {
     Idle,
     Search,
     Download,
-    Steal,
 }
 
 enum Job {
     Search(Result<FoundPic, String>),
     Download(Result<PathBuf, String>),
-    Steal(Result<Option<PersonResponse>, String>),
 }
 
 pub(super) struct GamerpicPage {
@@ -144,18 +139,12 @@ impl KilogApp {
         ui.add_space(12.0);
 
         let mut download = false;
-        let mut steal = false;
-        if self.gamerpic.busy == Busy::Idle {
-            ui.horizontal(|ui| {
-                if accent_button(ui, "Download", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
-                    download = true;
-                }
-                if accent_button(ui, "Steal", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
-                    steal = true;
-                }
-            });
-            ui.add_space(12.0);
+        if self.gamerpic.busy == Busy::Idle
+            && accent_button(ui, "Download", super::theme::SEARCH_OUTER_HEIGHT).clicked()
+        {
+            download = true;
         }
+        ui.add_space(12.0);
 
         if let Some(notice) = &self.gamerpic.notice {
             ui.label(egui::RichText::new(notice).size(14.0).color(MUTED));
@@ -164,9 +153,6 @@ impl KilogApp {
         if download {
             let ctx = ui.ctx().clone();
             self.start_gamerpic_download(ctx);
-        } else if steal {
-            let ctx = ui.ctx().clone();
-            self.start_gamerpic_steal(ctx);
         }
     }
 
@@ -204,16 +190,6 @@ impl KilogApp {
                 self.gamerpic.notice = Some(format!("Saved to {}", path.display()));
             }
             Job::Download(Err(err)) => self.gamerpic.error = Some(err),
-            Job::Steal(Ok(profile)) => {
-                self.gamerpic.error = None;
-                self.gamerpic.notice = Some("Set as your gamerpic.".into());
-                if let Some(profile) = profile
-                    && matches!(self.auth, AuthState::Authenticated { .. })
-                {
-                    self.auth = AuthState::Authenticated { profile };
-                }
-            }
-            Job::Steal(Err(err)) => self.gamerpic.error = Some(err),
         }
     }
 
@@ -257,26 +233,6 @@ impl KilogApp {
         });
     }
 
-    fn start_gamerpic_steal(&mut self, ctx: egui::Context) {
-        let Some(found) = &self.gamerpic.found else {
-            return;
-        };
-        let bytes = found.bytes.clone();
-        self.gamerpic.error = None;
-        self.gamerpic.notice = None;
-        if self.signed_in_xuid().is_none() {
-            self.gamerpic.error = Some("Sign in on Home to set a gamerpic.".into());
-            return;
-        }
-        let Some(authorization) = self.authorization() else {
-            self.gamerpic.error = Some("Xbox authorization is not ready.".into());
-            return;
-        };
-        self.spawn_gamerpic(ctx, Busy::Steal, async move {
-            Job::Steal(steal_gamerpic(&authorization, &bytes).await)
-        });
-    }
-
     fn authorization(&self) -> Option<String> {
         self.xbox
             .as_ref()
@@ -310,7 +266,6 @@ impl Busy {
             Self::Idle => "",
             Self::Search => "Searching…",
             Self::Download => "Downloading…",
-            Self::Steal => "Setting gamerpic…",
         }
     }
 }
@@ -354,32 +309,6 @@ async fn fetch_gamerpic(authorization: &str, gamertag: &str, id: u64) -> Result<
         bytes: bytes.to_vec(),
         id,
     })
-}
-
-async fn steal_gamerpic(
-    authorization: &str,
-    bytes: &[u8],
-) -> Result<Option<PersonResponse>, String> {
-    let png = square_png(bytes)?;
-    crate::xbox::profile::set_own_gamerpic(authorization, &png)
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(crate::xbox::profile::fetch_me(authorization).await.ok())
-}
-
-fn square_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let source = image::load_from_memory(bytes).map_err(|err| err.to_string())?;
-    let filter = if source.width().max(source.height()) <= 128 {
-        image::imageops::FilterType::Nearest
-    } else {
-        image::imageops::FilterType::Lanczos3
-    };
-    let resized = source.resize_exact(GAMERPIC_SIZE, GAMERPIC_SIZE, filter);
-    let mut png = Vec::new();
-    resized
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|err| err.to_string())?;
-    Ok(png)
 }
 
 fn save_download(gamertag: &str, bytes: &[u8]) -> Result<PathBuf, String> {
@@ -504,7 +433,7 @@ fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response 
 
 #[cfg(test)]
 mod tests {
-    use super::{file_stem, square_png};
+    use super::file_stem;
 
     #[test]
     fn file_stem_strips_windows_characters() {
@@ -512,20 +441,5 @@ mod tests {
         assert_eq!(file_stem("  "), "gamerpic");
         assert_eq!(file_stem("CON"), "gamerpic");
         assert_eq!(file_stem("Major Nelson."), "Major Nelson");
-    }
-
-    #[test]
-    fn small_images_become_square_pngs() {
-        let image = image::RgbImage::from_pixel(4, 4, image::Rgb([10, 20, 30]));
-        let mut bytes = Vec::new();
-        image::DynamicImage::ImageRgb8(image)
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .unwrap();
-        let png = square_png(&bytes).unwrap();
-        let decoded = image::load_from_memory(&png).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (1080, 1080));
     }
 }
