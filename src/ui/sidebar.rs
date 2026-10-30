@@ -6,7 +6,7 @@ use super::theme::{ACCENT, MUTED, TEXT};
 
 impl KilogApp {
     pub(super) fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Kilog").size(20.0).strong().color(TEXT));
+        ui.label(egui::RichText::new("kilog").size(20.0).strong().color(TEXT));
         ui.add_space(20.0);
         ui.spacing_mut().item_spacing.y = 4.0;
 

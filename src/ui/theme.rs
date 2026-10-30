@@ -1,5 +1,9 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use eframe::egui::{self, Color32, CornerRadius, Stroke, Visuals};
 use egui_lucide::Lucide;
+
+static TIME_FONT: AtomicBool = AtomicBool::new(false);
 
 pub const CANVAS: Color32 = Color32::from_rgb(16, 17, 20);
 pub const SIDEBAR: Color32 = Color32::from_rgb(22, 24, 29);
@@ -97,6 +101,31 @@ pub fn apply(ctx: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(12.0, 8.0);
     });
+    install_time_font(ctx);
+}
+
+pub(super) fn time_font(size: f32) -> egui::FontId {
+    let family = if TIME_FONT.load(Ordering::Relaxed) {
+        egui::FontFamily::Name("Time".into())
+    } else {
+        egui::FontFamily::Proportional
+    };
+    egui::FontId::new(size, family)
+}
+
+fn install_time_font(ctx: &egui::Context) {
+    let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\segoeui.ttf") else {
+        return;
+    };
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "Time",
+        egui::FontData::from_owned(bytes),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: egui::FontFamily::Name("Time".into()),
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+    TIME_FONT.store(true, Ordering::Relaxed);
 }
 
 fn visuals() -> Visuals {

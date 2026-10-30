@@ -186,7 +186,11 @@ impl KilogApp {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
         ui.add_space(10.0);
-        ui.label(egui::RichText::new(text).size(14.0).color(TEXT).monospace());
+        ui.label(
+            egui::RichText::new(text)
+                .font(super::theme::time_font(14.0))
+                .color(TEXT),
+        );
     }
 
     fn draw_queue_and_bar(&mut self, ui: &mut egui::Ui) {
@@ -225,9 +229,8 @@ impl KilogApp {
                 };
                 ui.label(
                     egui::RichText::new(self.spoof_status_line())
-                        .size(14.0)
-                        .color(color)
-                        .monospace(),
+                        .font(super::theme::time_font(14.0))
+                        .color(color),
                 );
             });
         });
@@ -481,9 +484,8 @@ impl KilogApp {
                         format_hms(edited),
                         finish_stamp(run)
                     ))
-                    .size(14.0)
-                    .color(TEXT)
-                    .monospace(),
+                    .font(super::theme::time_font(14.0))
+                    .color(TEXT),
                 );
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
@@ -1242,7 +1244,7 @@ fn queue_row(
         .layout_job(egui::text::LayoutJob::single_section(
             time.to_owned(),
             egui::TextFormat {
-                font_id: egui::FontId::monospace(14.0),
+                font_id: super::theme::time_font(14.0),
                 color: if randomized.is_some() {
                     MUTED
                 } else {
@@ -1258,7 +1260,7 @@ fn queue_row(
         ));
     let randomized_galley = randomized.map(|label| {
         ui.painter()
-            .layout_no_wrap(label.to_owned(), egui::FontId::monospace(14.0), time_color)
+            .layout_no_wrap(label.to_owned(), super::theme::time_font(14.0), time_color)
     });
     let randomized_width = randomized_galley
         .as_ref()
