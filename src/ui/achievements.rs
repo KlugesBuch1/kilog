@@ -215,7 +215,8 @@ impl KilogApp {
                 submit = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if accent_button(ui, "Open Auto Unlock", super::theme::SEARCH_OUTER_HEIGHT).clicked()
+                if accent_button(ui, "Open Auto Unlock", super::theme::SEARCH_OUTER_HEIGHT)
+                    .clicked()
                 {
                     let id = self
                         .achievements_page

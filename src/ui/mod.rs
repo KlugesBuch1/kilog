@@ -1,5 +1,6 @@
 mod achievements;
 mod auto_unlock;
+mod gamerpic;
 mod games;
 mod home;
 mod page;
@@ -72,6 +73,7 @@ pub struct KilogApp {
     title_search: title_search::TitleSearch,
     achievements_page: achievements::AchievementPage,
     stats_page: stats::StatsPage,
+    gamerpic: gamerpic::GamerpicPage,
     auto: auto_unlock::AutoUnlock,
     spoof: spoofing::SpoofState,
     event_notice: Option<String>,
@@ -115,6 +117,7 @@ impl KilogApp {
             title_search: title_search::TitleSearch::new(),
             achievements_page: achievements::AchievementPage::new(),
             stats_page: stats::StatsPage::new(),
+            gamerpic: gamerpic::GamerpicPage::new(),
             auto: auto_unlock::AutoUnlock::new(),
             spoof: spoofing::SpoofState::new(),
             event_notice: None,
@@ -211,6 +214,7 @@ impl KilogApp {
         self.stop_auto_unlock();
         self.achievements_page.clear();
         self.stats_page.clear();
+        self.gamerpic.clear();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
         self.auth_task = Some(self.runtime.spawn(async move {
@@ -243,6 +247,7 @@ impl KilogApp {
         self.title_search.clear();
         self.achievements_page.clear();
         self.stats_page.clear();
+        self.gamerpic.clear();
         self.stop_auto_unlock();
         self.stop_spoofing();
         if let Err(err) = crate::auth::clear_refresh_token() {
@@ -429,6 +434,8 @@ impl KilogApp {
             self.auto_unlock_page(ui);
         } else if self.page == Page::Spoofing {
             self.spoofing_page(ui);
+        } else if self.page == Page::Gamerpic {
+            self.gamerpic_page(ui);
         } else {
             ui.label(
                 egui::RichText::new("Nothing here yet.")
@@ -463,6 +470,7 @@ impl eframe::App for KilogApp {
         self.poll_title_search(ctx.clone());
         self.poll_achievements();
         self.poll_stats();
+        self.poll_gamerpic();
         self.poll_auto_unlock();
         self.poll_heartbeat();
         self.watch_xbox_app(ctx);
@@ -486,9 +494,9 @@ impl eframe::App for KilogApp {
         egui::Panel::left("sidebar")
             .resizable(false)
             .show_separator_line(true)
-            .default_size(228.0)
-            .min_size(228.0)
-            .max_size(228.0)
+            .default_size(252.0)
+            .min_size(252.0)
+            .max_size(252.0)
             .frame(
                 egui::Frame::new()
                     .fill(theme::SIDEBAR)

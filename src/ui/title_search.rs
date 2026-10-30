@@ -144,9 +144,7 @@ impl KilogApp {
                 440.0,
             );
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if enter
-                || search_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked()
-            {
+            if enter || search_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
                 submit = true;
             }
         });

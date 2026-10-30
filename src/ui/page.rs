@@ -9,11 +9,12 @@ pub(super) enum Page {
     AutoUnlock,
     Spoofing,
     TitleSearch,
+    Gamerpic,
     Settings,
 }
 
 impl Page {
-    pub(super) const MAIN: [Self; 7] = [
+    pub(super) const MAIN: [Self; 8] = [
         Self::Home,
         Self::Games,
         Self::Achievements,
@@ -21,6 +22,7 @@ impl Page {
         Self::AutoUnlock,
         Self::Spoofing,
         Self::TitleSearch,
+        Self::Gamerpic,
     ];
 
     pub(super) fn title(self) -> &'static str {
@@ -32,6 +34,7 @@ impl Page {
             Self::AutoUnlock => "Auto Unlock",
             Self::Spoofing => "Spoofing",
             Self::TitleSearch => "Title search",
+            Self::Gamerpic => "Gamerpic Downloader",
             Self::Settings => "Settings",
         }
     }
@@ -45,6 +48,7 @@ impl Page {
             Self::AutoUnlock => Lucide::LockOpen,
             Self::Spoofing => Lucide::ClockPlus,
             Self::TitleSearch => Lucide::Search,
+            Self::Gamerpic => Lucide::ImageDown,
             Self::Settings => Lucide::Settings,
         }
     }

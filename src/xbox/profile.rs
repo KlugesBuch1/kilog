@@ -29,7 +29,47 @@ impl PersonResponse {
     }
 }
 
+pub struct Gamerpic {
+    pub gamertag: String,
+    pub url: String,
+}
+
+pub async fn gamerpic_for_gamertag(authorization: &str, gamertag: &str) -> Result<Gamerpic, Error> {
+    let gamertag = checked_gamertag(authorization, gamertag)?;
+    let url = format!(
+        "https://profile.xboxlive.com/users/gt({})/profile/settings?settings=Gamertag,GameDisplayPicRaw",
+        encode_gamertag(gamertag)
+    );
+    let body = profile_body(&url, authorization).await?;
+    let person = person_from_settings(&body)?;
+    let pic = person
+        .display_pic_raw
+        .filter(|url| !url.trim().is_empty())
+        .ok_or_else(|| Error::Xbox(format!("no gamerpic for {gamertag}")))?;
+    Ok(Gamerpic {
+        gamertag: person
+            .gamertag
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| gamertag.to_owned()),
+        url: pic,
+    })
+}
+
 pub async fn xuid_for_gamertag(authorization: &str, gamertag: &str) -> Result<String, Error> {
+    let gamertag = checked_gamertag(authorization, gamertag)?;
+    let url = format!(
+        "https://profile.xboxlive.com/users/gt({})/profile/settings?settings=Gamertag",
+        encode_gamertag(gamertag)
+    );
+    let body = profile_body(&url, authorization).await?;
+    let person = person_from_settings(&body)?;
+    person
+        .xuid
+        .filter(|xuid| !xuid.trim().is_empty())
+        .ok_or_else(|| Error::Xbox(format!("no xuid for {gamertag}")))
+}
+
+fn checked_gamertag<'a>(authorization: &str, gamertag: &'a str) -> Result<&'a str, Error> {
     let gamertag = gamertag.trim();
     if gamertag.is_empty() {
         return Err(Error::Xbox("gamertag is empty".into()));
@@ -37,11 +77,11 @@ pub async fn xuid_for_gamertag(authorization: &str, gamertag: &str) -> Result<St
     if authorization.trim().is_empty() {
         return Err(Error::Xbox("authorization is empty".into()));
     }
-    let url = format!(
-        "https://profile.xboxlive.com/users/gt({})/profile/settings?settings=Gamertag",
-        encode_gamertag(gamertag)
-    );
-    let response = reqwest::Client::builder()
+    Ok(gamertag)
+}
+
+async fn profile_response(url: &str, authorization: &str) -> Result<reqwest::Response, Error> {
+    Ok(reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()?
         .get(url)
@@ -49,7 +89,11 @@ pub async fn xuid_for_gamertag(authorization: &str, gamertag: &str) -> Result<St
         .header("x-xbl-contract-version", "2")
         .header("Accept", "application/json")
         .send()
-        .await?;
+        .await?)
+}
+
+async fn profile_body(url: &str, authorization: &str) -> Result<String, Error> {
+    let response = profile_response(url, authorization).await?;
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
@@ -59,11 +103,7 @@ pub async fn xuid_for_gamertag(authorization: &str, gamertag: &str) -> Result<St
             status.as_u16()
         )));
     }
-    let person = person_from_settings(&body)?;
-    person
-        .xuid
-        .filter(|xuid| !xuid.trim().is_empty())
-        .ok_or_else(|| Error::Xbox(format!("no xuid for {gamertag}")))
+    Ok(body)
 }
 
 fn encode_gamertag(gamertag: &str) -> String {
