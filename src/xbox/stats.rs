@@ -111,6 +111,104 @@ pub async fn attach_stat_labels(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatWriteStatus {
+    Updated,
+    Unauthorized,
+    Forbidden,
+    Rejected(String),
+}
+
+/// Writes one stat on this service config with the signed-in user's XBL3.0 token.
+///
+/// Integer and Double values are sent as numbers. String values are sent as text.
+/// After [`StatWriteStatus::Updated`], refetch the list to read the stored value.
+/// When the stat metadata says the stat is a sum, the service adds the posted
+/// number to the stored value instead of replacing it.
+pub async fn write_user_stat(
+    authorization: &str,
+    xuid: &str,
+    scid: &str,
+    name: &str,
+    stat_type: StatType,
+    value: &str,
+) -> Result<StatWriteStatus, Error> {
+    let xuid = xuid.trim();
+    if xuid.is_empty() {
+        return Err(Error::Xbox("xuid is empty".into()));
+    }
+    if authorization.trim().is_empty() {
+        return Err(Error::Xbox("authorization is empty".into()));
+    }
+    let scid = scid.trim();
+    if scid.is_empty() {
+        return Err(Error::Xbox("service config id is empty".into()));
+    }
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Xbox("stat name is empty".into()));
+    }
+    let body = stat_write_body(name, stat_type, value)?;
+    let url = format!("https://statswrite.xboxlive.com/stats/users/{xuid}/scids/{scid}");
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?
+        .patch(url)
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "4")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    Ok(stat_write_status(status.as_u16(), &text))
+}
+
+fn stat_write_body(name: &str, stat_type: StatType, value: &str) -> Result<String, Error> {
+    let value = match stat_type {
+        StatType::Integer => Value::Number(integer_stat_value(value)?),
+        StatType::Double => Value::Number(double_stat_value(value)?),
+        StatType::String => Value::String(value.to_owned()),
+        StatType::Unknown => return Err(Error::Xbox("stat type is unknown".into())),
+    };
+    let mut title = serde_json::Map::new();
+    title.insert(name.to_owned(), serde_json::json!({ "value": value }));
+    Ok(serde_json::json!({ "stats": { "title": title } }).to_string())
+}
+
+fn integer_stat_value(value: &str) -> Result<serde_json::Number, Error> {
+    let value = value.trim();
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::Xbox("stat value is not an integer".into()));
+    }
+    serde_json::from_str(value).map_err(|_| Error::Xbox("stat value is not an integer".into()))
+}
+
+fn double_stat_value(value: &str) -> Result<serde_json::Number, Error> {
+    let value = value.trim();
+    let number = serde_json::from_str::<serde_json::Number>(value)
+        .map_err(|_| Error::Xbox("stat value is not a number".into()))?;
+    if number.as_f64().is_some_and(|number| !number.is_finite()) {
+        return Err(Error::Xbox("stat value is not a number".into()));
+    }
+    Ok(number)
+}
+
+fn stat_write_status(status: u16, body: &str) -> StatWriteStatus {
+    match status {
+        200 | 204 => StatWriteStatus::Updated,
+        401 => StatWriteStatus::Unauthorized,
+        403 => StatWriteStatus::Forbidden,
+        _ => {
+            let snippet: String = body.chars().take(180).collect();
+            StatWriteStatus::Rejected(format!("stat write returned {status}: {snippet}"))
+        }
+    }
+}
+
 async fn fetch_label_batch(
     client: &reqwest::Client,
     authorization: &str,
@@ -366,7 +464,7 @@ fn json_stat_value(value: Option<&Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StatType, parse_user_stats};
+    use super::{StatType, StatWriteStatus, parse_user_stats, stat_write_body, stat_write_status};
 
     #[test]
     fn groups_become_stat_records() {
@@ -588,6 +686,46 @@ mod tests {
         let names = [long];
         let batches = super::label_batches(&names);
         assert_eq!(batches, vec![vec![names[0].as_str()]]);
+    }
+
+    #[test]
+    fn stat_writes_send_numbers_or_text() {
+        let integer = stat_write_body("CarsOwned", StatType::Integer, " 12 ").unwrap();
+        let integer: serde_json::Value = serde_json::from_str(&integer).unwrap();
+        assert_eq!(
+            integer["stats"]["title"]["CarsOwned"]["value"],
+            serde_json::json!(12)
+        );
+
+        let double = stat_write_body("MoneyEarned", StatType::Double, "1500.5").unwrap();
+        let double: serde_json::Value = serde_json::from_str(&double).unwrap();
+        assert_eq!(
+            double["stats"]["title"]["MoneyEarned"]["value"],
+            serde_json::json!(1500.5)
+        );
+
+        let text = stat_write_body("FavoriteCar", StatType::String, "Sentinel").unwrap();
+        let text: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            text["stats"]["title"]["FavoriteCar"]["value"],
+            serde_json::json!("Sentinel")
+        );
+
+        assert!(stat_write_body("CarsOwned", StatType::Integer, "12.5").is_err());
+        assert!(stat_write_body("MoneyEarned", StatType::Double, "nope").is_err());
+        assert!(stat_write_body("Badge", StatType::Unknown, "1").is_err());
+    }
+
+    #[test]
+    fn stat_write_status_matches_achievement_progress() {
+        assert_eq!(stat_write_status(200, ""), StatWriteStatus::Updated);
+        assert_eq!(stat_write_status(204, ""), StatWriteStatus::Updated);
+        assert_eq!(stat_write_status(401, ""), StatWriteStatus::Unauthorized);
+        assert_eq!(stat_write_status(403, "no"), StatWriteStatus::Forbidden);
+        assert_eq!(
+            stat_write_status(400, "bad value"),
+            StatWriteStatus::Rejected("stat write returned 400: bad value".into())
+        );
     }
 
     #[test]
