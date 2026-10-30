@@ -563,19 +563,12 @@ async fn fetch_catalog_page(
 }
 
 fn is_listed_game(title: &Title) -> bool {
-    on_modern_platforms(title) && has_live_identity(title)
-}
-
-fn on_modern_platforms(title: &Title) -> bool {
-    title
+    let modern = title
         .devices
         .iter()
-        .any(|device| matches!(device.as_str(), "Xbox One" | "Xbox Series" | "PC"))
-}
-
-fn has_live_identity(title: &Title) -> bool {
-    let present = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.is_empty());
-    present(&title.service_config_id) || present(&title.pfn) || present(&title.bing_id)
+        .any(|device| matches!(device.as_str(), "Xbox One" | "Xbox Series" | "PC"));
+    let id = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.is_empty());
+    modern && (id(&title.service_config_id) || id(&title.pfn) || id(&title.bing_id))
 }
 
 pub async fn search_catalog_with_art(
@@ -988,7 +981,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_search_drops_store_clones_without_live_identity() {
+    fn listed_games() {
         let body = r#"{
             "count": 2,
             "items": [

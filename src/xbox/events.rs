@@ -345,8 +345,6 @@ fn support_gap(has_template: bool, in_catalog: bool) -> Option<&'static str> {
     }
 }
 
-/// Achievement ids that have event data when the title is only partly supported.
-/// `None` means every achievement can be unlocked, or this is not an event title.
 pub(crate) fn partial_event_ids(title_id: u64) -> Result<Option<HashSet<String>>, Error> {
     if missing_event_support(title_id)?.is_some() {
         return Ok(None);
