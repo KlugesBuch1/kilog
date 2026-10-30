@@ -1,26 +1,44 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32};
 
 use super::KilogApp;
+use super::home::AuthState;
 use super::theme::{ACCENT, MUTED, TEXT};
+use crate::xbox::profile::PersonResponse;
 
 const ERROR: Color32 = Color32::from_rgb(232, 120, 128);
 const MAX_BYTES: usize = 8 * 1024 * 1024;
+const GAMERPIC_SIZE: u32 = 1080;
 
-struct SavedPic {
+struct FoundPic {
     gamertag: String,
-    path: PathBuf,
     bytes: Vec<u8>,
     id: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Busy {
+    Idle,
+    Search,
+    Download,
+    Steal,
+}
+
+enum Job {
+    Search(Result<FoundPic, String>),
+    Download(Result<PathBuf, String>),
+    Steal(Result<Option<PersonResponse>, String>),
+}
+
 pub(super) struct GamerpicPage {
     gamertag: String,
-    busy: bool,
+    busy: Busy,
     error: Option<String>,
-    saved: Option<SavedPic>,
-    rx: Option<tokio::sync::oneshot::Receiver<(u64, Result<SavedPic, String>)>>,
+    notice: Option<String>,
+    found: Option<FoundPic>,
+    rx: Option<tokio::sync::oneshot::Receiver<(u64, Job)>>,
     task: Option<tokio::task::JoinHandle<()>>,
     epoch: u64,
     next_id: u64,
@@ -30,9 +48,10 @@ impl GamerpicPage {
     pub(super) fn new() -> Self {
         Self {
             gamertag: String::new(),
-            busy: false,
+            busy: Busy::Idle,
             error: None,
-            saved: None,
+            notice: None,
+            found: None,
             rx: None,
             task: None,
             epoch: 0,
@@ -54,36 +73,40 @@ impl GamerpicPage {
             task.abort();
         }
         self.rx = None;
-        self.busy = false;
+        self.busy = Busy::Idle;
         self.epoch = self.epoch.wrapping_add(1);
     }
 }
 
 impl KilogApp {
     pub(super) fn gamerpic_page(&mut self, ui: &mut egui::Ui) {
-        if self.gamerpic.busy {
+        if self.gamerpic.busy != Busy::Idle {
             ui.ctx().request_repaint();
         }
 
-        let mut submit = false;
+        let mut search = false;
         ui.horizontal(|ui| {
             let field =
                 super::theme::text_field(ui, &mut self.gamerpic.gamertag, "Gamertag", 320.0);
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if self.gamerpic.busy {
+            let clicked = accent_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked();
+            if self.gamerpic.busy == Busy::Idle && (enter || clicked) {
+                search = true;
+            }
+            if self.gamerpic.busy != Busy::Idle {
                 ui.spinner();
-                ui.label(egui::RichText::new("Downloading…").size(14.0).color(MUTED));
-            } else if enter
-                || accent_button(ui, "Download", super::theme::SEARCH_OUTER_HEIGHT).clicked()
-            {
-                submit = true;
+                ui.label(
+                    egui::RichText::new(self.gamerpic.busy.label())
+                        .size(14.0)
+                        .color(MUTED),
+                );
             }
         });
         ui.add_space(12.0);
 
-        if submit {
+        if search {
             let ctx = ui.ctx().clone();
-            self.start_gamerpic_download(ctx);
+            self.start_gamerpic_search(ctx);
         }
 
         if let Some(err) = &self.gamerpic.error {
@@ -91,38 +114,60 @@ impl KilogApp {
             ui.add_space(12.0);
         }
 
-        let Some(saved) = &self.gamerpic.saved else {
+        let Some(found) = &self.gamerpic.found else {
             if self.gamerpic.error.is_none() {
                 let message = if self.signed_in_xuid().is_none() {
-                    "Sign in on Home, then enter a gamertag."
+                    "Sign in on Home, then search for a gamertag."
                 } else {
-                    "Enter a gamertag to download its gamerpic."
+                    "Search for a gamertag to see its gamerpic."
                 };
                 ui.label(egui::RichText::new(message).size(15.0).color(MUTED));
             }
             return;
         };
+
         ui.add(
             egui::Image::from_bytes(
-                format!("bytes://gamerpic/{}", saved.id),
-                saved.bytes.clone(),
+                format!("bytes://gamerpic/{}", found.id),
+                found.bytes.clone(),
             )
             .fit_to_exact_size(egui::vec2(148.0, 148.0))
             .corner_radius(16),
         );
         ui.add_space(12.0);
         ui.label(
-            egui::RichText::new(&saved.gamertag)
+            egui::RichText::new(&found.gamertag)
                 .size(18.0)
                 .strong()
                 .color(TEXT),
         );
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(format!("Saved to {}", saved.path.display()))
-                .size(14.0)
-                .color(MUTED),
-        );
+        ui.add_space(12.0);
+
+        let mut download = false;
+        let mut steal = false;
+        if self.gamerpic.busy == Busy::Idle {
+            ui.horizontal(|ui| {
+                if accent_button(ui, "Download", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
+                    download = true;
+                }
+                if accent_button(ui, "Steal", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
+                    steal = true;
+                }
+            });
+            ui.add_space(12.0);
+        }
+
+        if let Some(notice) = &self.gamerpic.notice {
+            ui.label(egui::RichText::new(notice).size(14.0).color(MUTED));
+        }
+
+        if download {
+            let ctx = ui.ctx().clone();
+            self.start_gamerpic_download(ctx);
+        } else if steal {
+            let ctx = ui.ctx().clone();
+            self.start_gamerpic_steal(ctx);
+        }
     }
 
     pub(super) fn poll_gamerpic(&mut self) {
@@ -135,10 +180,10 @@ impl KilogApp {
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Some((
                     self.gamerpic.epoch,
-                    Err("gamerpic download was dropped".into()),
+                    Job::Search(Err("gamerpic request was dropped".into())),
                 )),
             });
-        let Some((epoch, result)) = ready else {
+        let Some((epoch, job)) = ready else {
             return;
         };
         if epoch != self.gamerpic.epoch {
@@ -146,55 +191,131 @@ impl KilogApp {
         }
         self.gamerpic.rx = None;
         self.gamerpic.task = None;
-        self.gamerpic.busy = false;
-        match result {
-            Ok(saved) => {
+        self.gamerpic.busy = Busy::Idle;
+        match job {
+            Job::Search(Ok(found)) => {
                 self.gamerpic.error = None;
-                self.gamerpic.saved = Some(saved);
+                self.gamerpic.notice = None;
+                self.gamerpic.found = Some(found);
             }
-            Err(err) => self.gamerpic.error = Some(err),
+            Job::Search(Err(err)) => self.gamerpic.error = Some(err),
+            Job::Download(Ok(path)) => {
+                self.gamerpic.error = None;
+                self.gamerpic.notice = Some(format!("Saved to {}", path.display()));
+            }
+            Job::Download(Err(err)) => self.gamerpic.error = Some(err),
+            Job::Steal(Ok(profile)) => {
+                self.gamerpic.error = None;
+                self.gamerpic.notice = Some("Set as your gamerpic.".into());
+                if let Some(profile) = profile
+                    && matches!(self.auth, AuthState::Authenticated { .. })
+                {
+                    self.auth = AuthState::Authenticated { profile };
+                }
+            }
+            Job::Steal(Err(err)) => self.gamerpic.error = Some(err),
         }
     }
 
-    fn start_gamerpic_download(&mut self, ctx: egui::Context) {
+    fn start_gamerpic_search(&mut self, ctx: egui::Context) {
         let gamertag = self.gamerpic.gamertag.trim().to_owned();
         if gamertag.is_empty() {
             return;
         }
         self.gamerpic.error = None;
+        self.gamerpic.notice = None;
         if self.signed_in_xuid().is_none() {
             self.gamerpic.abort();
-            self.gamerpic.error = Some("Sign in on Home to download a gamerpic.".into());
+            self.gamerpic.found = None;
+            self.gamerpic.error = Some("Sign in on Home to search for a gamerpic.".into());
             return;
         }
-        let Some(authorization) = self.xbox.as_ref().map(|xbox| xbox.authorization.clone()) else {
+        let Some(authorization) = self.authorization() else {
             self.gamerpic.abort();
+            self.gamerpic.found = None;
             self.gamerpic.error = Some("Xbox authorization is not ready.".into());
             return;
         };
+        self.gamerpic.found = None;
+        let id = self.gamerpic.next_id;
+        self.gamerpic.next_id = self.gamerpic.next_id.wrapping_add(1);
+        self.spawn_gamerpic(ctx, Busy::Search, async move {
+            Job::Search(fetch_gamerpic(&authorization, &gamertag, id).await)
+        });
+    }
+
+    fn start_gamerpic_download(&mut self, ctx: egui::Context) {
+        let Some(found) = &self.gamerpic.found else {
+            return;
+        };
+        let gamertag = found.gamertag.clone();
+        let bytes = found.bytes.clone();
+        self.gamerpic.error = None;
+        self.gamerpic.notice = None;
+        self.spawn_gamerpic(ctx, Busy::Download, async move {
+            Job::Download(save_download(&gamertag, &bytes).map_err(|err| err.to_string()))
+        });
+    }
+
+    fn start_gamerpic_steal(&mut self, ctx: egui::Context) {
+        let Some(found) = &self.gamerpic.found else {
+            return;
+        };
+        let bytes = found.bytes.clone();
+        self.gamerpic.error = None;
+        self.gamerpic.notice = None;
+        if self.signed_in_xuid().is_none() {
+            self.gamerpic.error = Some("Sign in on Home to set a gamerpic.".into());
+            return;
+        }
+        let Some(authorization) = self.authorization() else {
+            self.gamerpic.error = Some("Xbox authorization is not ready.".into());
+            return;
+        };
+        self.spawn_gamerpic(ctx, Busy::Steal, async move {
+            Job::Steal(steal_gamerpic(&authorization, &bytes).await)
+        });
+    }
+
+    fn authorization(&self) -> Option<String> {
+        self.xbox
+            .as_ref()
+            .map(|xbox| xbox.authorization.clone())
+            .filter(|authorization| !authorization.trim().is_empty())
+    }
+
+    fn spawn_gamerpic<F>(&mut self, ctx: egui::Context, busy: Busy, work: F)
+    where
+        F: Future<Output = Job> + Send + 'static,
+    {
         if let Some(task) = self.gamerpic.task.take() {
             task.abort();
         }
         self.gamerpic.epoch = self.gamerpic.epoch.wrapping_add(1);
         let epoch = self.gamerpic.epoch;
-        let id = self.gamerpic.next_id;
-        self.gamerpic.next_id = self.gamerpic.next_id.wrapping_add(1);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.gamerpic.rx = Some(rx);
-        self.gamerpic.busy = true;
+        self.gamerpic.busy = busy;
         self.gamerpic.task = Some(self.runtime.spawn(async move {
-            let result = download_gamerpic(&authorization, &gamertag, id).await;
-            let _ = tx.send((epoch, result));
+            let job = work.await;
+            let _ = tx.send((epoch, job));
             ctx.request_repaint();
         }));
     }
 }
 
-async fn download_gamerpic(
-    authorization: &str,
-    gamertag: &str,
-    id: u64,
-) -> Result<SavedPic, String> {
+impl Busy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "",
+            Self::Search => "Searching…",
+            Self::Download => "Downloading…",
+            Self::Steal => "Setting gamerpic…",
+        }
+    }
+}
+
+async fn fetch_gamerpic(authorization: &str, gamertag: &str, id: u64) -> Result<FoundPic, String> {
     let pic = crate::xbox::profile::gamerpic_for_gamertag(authorization, gamertag)
         .await
         .map_err(|err| err.to_string())?;
@@ -228,54 +349,71 @@ async fn download_gamerpic(
     if !mime.is_empty() && !mime.starts_with("image/") {
         return Err(format!("gamerpic URL returned {mime}"));
     }
-    let ext = image_extension(&mime, &bytes);
-    let path = save_download(&pic.gamertag, ext, &bytes).map_err(|err| err.to_string())?;
-    Ok(SavedPic {
+    Ok(FoundPic {
         gamertag: pic.gamertag,
-        path,
         bytes: bytes.to_vec(),
         id,
     })
 }
 
-fn image_extension(mime: &str, bytes: &[u8]) -> &'static str {
-    match mime {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        _ => match bytes {
-            [0x89, b'P', b'N', b'G', ..] => "png",
-            [0xFF, 0xD8, 0xFF, ..] => "jpg",
-            [b'G', b'I', b'F', ..] => "gif",
-            [
-                b'R',
-                b'I',
-                b'F',
-                b'F',
-                _,
-                _,
-                _,
-                _,
-                b'W',
-                b'E',
-                b'B',
-                b'P',
-                ..,
-            ] => "webp",
-            _ => "png",
-        },
-    }
+async fn steal_gamerpic(
+    authorization: &str,
+    bytes: &[u8],
+) -> Result<Option<PersonResponse>, String> {
+    let png = square_png(bytes)?;
+    crate::xbox::profile::set_own_gamerpic(authorization, &png)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(crate::xbox::profile::fetch_me(authorization).await.ok())
 }
 
-fn save_download(gamertag: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+fn square_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let source = image::load_from_memory(bytes).map_err(|err| err.to_string())?;
+    let filter = if source.width().max(source.height()) <= 128 {
+        image::imageops::FilterType::Nearest
+    } else {
+        image::imageops::FilterType::Lanczos3
+    };
+    let resized = source.resize_exact(GAMERPIC_SIZE, GAMERPIC_SIZE, filter);
+    let mut png = Vec::new();
+    resized
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|err| err.to_string())?;
+    Ok(png)
+}
+
+fn save_download(gamertag: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     let dir = directories::UserDirs::new()
         .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
         .ok_or_else(|| "downloads folder not found".to_owned())?;
     std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    let path = unique_path(&dir, &file_stem(gamertag), ext);
+    let path = unique_path(&dir, &file_stem(gamertag), image_extension(bytes));
     std::fs::write(&path, bytes).map_err(|err| err.to_string())?;
     Ok(path)
+}
+
+fn image_extension(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [0xFF, 0xD8, 0xFF, ..] => "jpg",
+        [b'G', b'I', b'F', ..] => "gif",
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => "webp",
+        _ => "png",
+    }
 }
 
 fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
@@ -366,7 +504,7 @@ fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response 
 
 #[cfg(test)]
 mod tests {
-    use super::file_stem;
+    use super::{file_stem, square_png};
 
     #[test]
     fn file_stem_strips_windows_characters() {
@@ -374,5 +512,20 @@ mod tests {
         assert_eq!(file_stem("  "), "gamerpic");
         assert_eq!(file_stem("CON"), "gamerpic");
         assert_eq!(file_stem("Major Nelson."), "Major Nelson");
+    }
+
+    #[test]
+    fn small_images_become_square_pngs() {
+        let image = image::RgbImage::from_pixel(4, 4, image::Rgb([10, 20, 30]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let png = square_png(&bytes).unwrap();
+        let decoded = image::load_from_memory(&png).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (1080, 1080));
     }
 }
