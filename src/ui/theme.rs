@@ -17,6 +17,8 @@ pub const TEXT: Color32 = Color32::from_rgb(0xE2, 0xE8, 0xF0);
 pub const MUTED: Color32 = Color32::from_rgb(0x94, 0xA3, 0xB8);
 pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x3A, 0xED);
 pub const RADIUS: u8 = 10;
+pub(super) const SEARCH_HEIGHT: f32 = 40.0;
+pub(super) const SEARCH_OUTER_HEIGHT: f32 = SEARCH_HEIGHT + 2.0;
 pub const CARD_RADIUS: u8 = 12;
 pub const TITLE_BAR_HEIGHT: f32 = 38.0;
 pub(super) fn gamerscore_icon(ui: &egui::Ui, rect: egui::Rect) {
@@ -31,7 +33,7 @@ pub(super) fn search_field(
     hint: &str,
     width: f32,
 ) -> egui::Response {
-    let height = 40.0;
+    let height = SEARCH_HEIGHT;
     let icon_size = 16.0;
     let text_width = width - 28.0 - icon_size - 12.0;
     egui::Frame::new()
@@ -73,7 +75,7 @@ pub(super) fn text_field(
     hint: &str,
     width: f32,
 ) -> egui::Response {
-    let height = 40.0;
+    let height = SEARCH_HEIGHT;
     let icon_size = 16.0;
     let text_width = width - 28.0 - icon_size - 12.0;
     egui::Frame::new()

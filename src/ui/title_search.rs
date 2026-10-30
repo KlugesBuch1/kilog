@@ -144,7 +144,9 @@ impl KilogApp {
                 440.0,
             );
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if enter || search_button(ui, "Search").clicked() {
+            if enter
+                || search_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked()
+            {
                 submit = true;
             }
         });
@@ -276,7 +278,7 @@ impl KilogApp {
                                     });
                                     ui.ctx().request_repaint();
                                 } else if self.title_search.can_reveal_more()
-                                    && search_button(ui, "More").clicked()
+                                    && search_button(ui, "More", 32.0).clicked()
                                 {
                                     more = true;
                                 }
@@ -763,11 +765,11 @@ fn copy_button(ui: &mut egui::Ui, copied: bool) -> egui::Response {
     response
 }
 
-fn search_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+fn search_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
     let font = egui::FontId::proportional(14.0);
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, TEXT);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 28.0, 32.0),
+        egui::vec2(galley.size().x + 28.0, height),
         egui::Sense::click(),
     );
     let fill = if response.hovered() {

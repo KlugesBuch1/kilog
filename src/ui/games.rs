@@ -15,15 +15,10 @@ impl KilogApp {
         let mut refresh = false;
         ui.horizontal(|ui| {
             super::theme::search_field(ui, &mut self.games_search, "Search for a game", 320.0);
-            egui::ComboBox::from_id_salt("game_filter")
-                .selected_text(self.games_filter.label())
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for filter in GameFilter::ALL {
-                        ui.selectable_value(&mut self.games_filter, filter, filter.label());
-                    }
-                });
-            if self.can_fetch_titles() && toolbar_button(ui, "Refresh").clicked() {
+            filter_box(ui, &mut self.games_filter);
+            if self.can_fetch_titles()
+                && toolbar_button(ui, "Refresh", super::theme::SEARCH_OUTER_HEIGHT).clicked()
+            {
                 refresh = true;
             }
             if let Some(total) = self.titles.as_ref().map(|list| list.titles.len()) {
@@ -63,7 +58,7 @@ impl KilogApp {
                     .color(Color32::from_rgb(232, 120, 128)),
             );
             ui.add_space(10.0);
-            if toolbar_button(ui, "Retry").clicked() {
+            if toolbar_button(ui, "Retry", 32.0).clicked() {
                 let ctx = ui.ctx().clone();
                 self.refresh_titles(ctx);
             }
@@ -383,8 +378,30 @@ fn platform_tags(ui: &mut egui::Ui, rect: egui::Rect, devices: &[String]) {
     }
 }
 
-fn toolbar_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 32.0), egui::Sense::click());
+fn filter_box(ui: &mut egui::Ui, filter: &mut GameFilter) {
+    let height = super::theme::SEARCH_OUTER_HEIGHT;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(filter.label().to_owned(), font, TEXT);
+    let content_h = galley.size().y.max(ui.spacing().icon_width);
+    let pad_y = ((height - content_h) * 0.5).max(0.0);
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::vec2(12.0, pad_y);
+        ui.spacing_mut().interact_size.y = height;
+        egui::ComboBox::from_id_salt("game_filter")
+            .selected_text(filter.label())
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                for choice in GameFilter::ALL {
+                    ui.selectable_value(filter, choice, choice.label());
+                }
+            });
+    });
+}
+
+fn toolbar_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, height), egui::Sense::click());
     let fill = if response.hovered() {
         ACCENT.gamma_multiply(1.12)
     } else {

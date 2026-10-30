@@ -102,7 +102,7 @@ impl KilogApp {
             let field =
                 super::theme::search_field(ui, &mut self.stats_page.query, "Title ID", 320.0);
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if enter || accent_button(ui, "Search").clicked() {
+            if enter || accent_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
                 submit = true;
             }
         });
@@ -504,7 +504,7 @@ fn stat_row(ui: &mut egui::Ui, stat: &UserStat, draft: &mut String, busy: bool) 
             if busy {
                 ui.spinner();
                 ui.label(egui::RichText::new("Saving…").size(13.0).color(MUTED));
-            } else if accent_button(ui, "Update").clicked()
+            } else if accent_button(ui, "Update", 32.0).clicked()
                 || (field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
             {
                 submit = true;
@@ -522,12 +522,12 @@ fn loading_row(ui: &mut egui::Ui, message: &str) {
     ui.ctx().request_repaint();
 }
 
-fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
     let galley =
         ui.painter()
             .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), TEXT);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 28.0, 32.0),
+        egui::vec2(galley.size().x + 28.0, height),
         egui::Sense::click(),
     );
     let fill = if response.hovered() {

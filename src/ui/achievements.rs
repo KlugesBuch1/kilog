@@ -211,11 +211,12 @@ impl KilogApp {
                 320.0,
             );
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if enter || accent_button(ui, "Search").clicked() {
+            if enter || accent_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked() {
                 submit = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if accent_button(ui, "Open Auto Unlock").clicked() {
+                if accent_button(ui, "Open Auto Unlock", super::theme::SEARCH_OUTER_HEIGHT).clicked()
+                {
                     let id = self
                         .achievements_page
                         .selected
@@ -309,7 +310,7 @@ impl KilogApp {
             } else if let Some(err) = error.as_deref() {
                 ui.label(egui::RichText::new(err).size(14.0).color(ERROR));
                 ui.add_space(8.0);
-                if accent_button(ui, "Retry").clicked() {
+                if accent_button(ui, "Retry", 32.0).clicked() {
                     retry = true;
                 }
             }
@@ -876,7 +877,7 @@ fn filter_chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
         ui.painter()
             .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), color);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 22.0, 30.0),
+        egui::vec2(galley.size().x + 22.0, 32.0),
         egui::Sense::click(),
     );
     let fill = if selected {
@@ -1232,12 +1233,12 @@ fn loading_row(ui: &mut egui::Ui, message: &str) {
     ui.ctx().request_repaint();
 }
 
-fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
     let galley =
         ui.painter()
             .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), TEXT);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 28.0, 32.0),
+        egui::vec2(galley.size().x + 28.0, height),
         egui::Sense::click(),
     );
     let fill = if response.hovered() {
