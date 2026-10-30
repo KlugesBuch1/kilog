@@ -5,6 +5,7 @@ pub(super) enum Page {
     Home,
     Games,
     Achievements,
+    Stats,
     AutoUnlock,
     Spoofing,
     TitleSearch,
@@ -12,10 +13,11 @@ pub(super) enum Page {
 }
 
 impl Page {
-    pub(super) const MAIN: [Self; 6] = [
+    pub(super) const MAIN: [Self; 7] = [
         Self::Home,
         Self::Games,
         Self::Achievements,
+        Self::Stats,
         Self::AutoUnlock,
         Self::Spoofing,
         Self::TitleSearch,
@@ -26,6 +28,7 @@ impl Page {
             Self::Home => "Home",
             Self::Games => "Games",
             Self::Achievements => "Achievements",
+            Self::Stats => "Stats Editor",
             Self::AutoUnlock => "Auto Unlock",
             Self::Spoofing => "Spoofing",
             Self::TitleSearch => "Title search",
@@ -38,6 +41,7 @@ impl Page {
             Self::Home => Lucide::House,
             Self::Games => Lucide::Gamepad2,
             Self::Achievements => Lucide::Trophy,
+            Self::Stats => Lucide::PencilLine,
             Self::AutoUnlock => Lucide::LockOpen,
             Self::Spoofing => Lucide::ClockPlus,
             Self::TitleSearch => Lucide::Search,

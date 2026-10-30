@@ -6,6 +6,7 @@ mod page;
 mod settings;
 mod sidebar;
 mod spoofing;
+mod stats;
 mod theme;
 mod title_search;
 mod titlebar;
@@ -70,6 +71,7 @@ pub struct KilogApp {
     titles_epoch: u64,
     title_search: title_search::TitleSearch,
     achievements_page: achievements::AchievementPage,
+    stats_page: stats::StatsPage,
     auto: auto_unlock::AutoUnlock,
     spoof: spoofing::SpoofState,
     event_notice: Option<String>,
@@ -112,6 +114,7 @@ impl KilogApp {
             titles_epoch: 0,
             title_search: title_search::TitleSearch::new(),
             achievements_page: achievements::AchievementPage::new(),
+            stats_page: stats::StatsPage::new(),
             auto: auto_unlock::AutoUnlock::new(),
             spoof: spoofing::SpoofState::new(),
             event_notice: None,
@@ -207,6 +210,7 @@ impl KilogApp {
         self.clear_titles();
         self.stop_auto_unlock();
         self.achievements_page.clear();
+        self.stats_page.clear();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         self.auth_rx = Some(rx);
         self.auth_task = Some(self.runtime.spawn(async move {
@@ -238,6 +242,7 @@ impl KilogApp {
         self.games_filter = GameFilter::All;
         self.title_search.clear();
         self.achievements_page.clear();
+        self.stats_page.clear();
         self.stop_auto_unlock();
         self.stop_spoofing();
         if let Err(err) = crate::auth::clear_refresh_token() {
@@ -418,6 +423,8 @@ impl KilogApp {
             self.settings_form(ui);
         } else if self.page == Page::Achievements {
             self.achievements_page(ui);
+        } else if self.page == Page::Stats {
+            self.stats_page(ui);
         } else if self.page == Page::AutoUnlock {
             self.auto_unlock_page(ui);
         } else if self.page == Page::Spoofing {
@@ -455,6 +462,7 @@ impl eframe::App for KilogApp {
         self.poll_titles();
         self.poll_title_search(ctx.clone());
         self.poll_achievements();
+        self.poll_stats();
         self.poll_auto_unlock();
         self.poll_heartbeat();
         self.watch_xbox_app(ctx);
