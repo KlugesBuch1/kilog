@@ -202,7 +202,7 @@ pub fn user_title_url(xuid: &str, title_id: u64) -> String {
 
 pub fn accept_language(force_region: bool) -> String {
     if force_region {
-        "en-GB".to_owned()
+        "en-US".to_owned()
     } else {
         system_locale()
     }
