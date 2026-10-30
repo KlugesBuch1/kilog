@@ -1,11 +1,8 @@
 use eframe::egui::{self, Color32};
-use egui_lucide::Lucide;
 
 use super::KilogApp;
 use super::page::Page;
 use super::theme::{ACCENT, MUTED, TEXT};
-
-const REPO_URL: &str = "https://github.com/KlugesBuch1/kilog";
 
 impl KilogApp {
     pub(super) fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -20,62 +17,11 @@ impl KilogApp {
         }
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            star_cta(ui);
-            ui.add_space(10.0);
             if nav_item(ui, Page::Settings, self.page == Page::Settings).clicked() {
                 self.page = Page::Settings;
             }
         });
     }
-}
-
-fn star_cta(ui: &mut egui::Ui) {
-    let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::click());
-
-    let fill = if response.hovered() {
-        ACCENT.gamma_multiply(1.12)
-    } else {
-        ACCENT
-    };
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
-
-    let label = "Star on GitHub";
-    let font = egui::FontId::proportional(14.0);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, TEXT);
-    let icon_size = 15.0;
-    let gap = 8.0;
-    let total = icon_size + gap + galley.size().x;
-    let start_x = rect.center().x - total / 2.0;
-
-    Lucide::Star
-        .size(icon_size)
-        .color(TEXT)
-        .stroke_width(2.0)
-        .image()
-        .paint_at(
-            ui,
-            egui::Rect::from_center_size(
-                egui::pos2(start_x + icon_size / 2.0, rect.center().y),
-                egui::vec2(icon_size, icon_size),
-            ),
-        );
-
-    ui.painter().galley(
-        egui::pos2(
-            start_x + icon_size + gap,
-            rect.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        TEXT,
-    );
-
-    if response.clicked() {
-        ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL));
-    }
-
-    response.on_hover_cursor(egui::CursorIcon::PointingHand);
 }
 
 fn nav_item(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Response {
