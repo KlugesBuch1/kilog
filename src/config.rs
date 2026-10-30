@@ -12,6 +12,7 @@ pub struct AppConfig {
     pub spoof_open_achievements: bool,
     pub stop_on_spoof_fail: bool,
     pub use_randomized_delays: bool,
+    pub anonymous_mode: bool,
     pub randomize_delays: DelayRandomize,
 }
 
@@ -39,6 +40,7 @@ impl Default for AppConfig {
             spoof_open_achievements: false,
             stop_on_spoof_fail: false,
             use_randomized_delays: false,
+            anonymous_mode: false,
             randomize_delays: DelayRandomize::default(),
         }
     }
@@ -197,6 +199,7 @@ mod tests {
         assert!(!config.spoof_open_achievements);
         assert!(!config.stop_on_spoof_fail);
         assert!(!config.use_randomized_delays);
+        assert!(!config.anonymous_mode);
         assert!(!config.randomize_delays.over_1_min.enabled);
         assert!(!config.randomize_delays.over_5_hours.enabled);
         assert_eq!(

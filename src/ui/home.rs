@@ -61,6 +61,7 @@ impl KilogApp {
             auth_note.as_ref(),
             loading,
             error.as_deref(),
+            self.config.anonymous_mode,
         );
     }
 }
@@ -71,6 +72,7 @@ fn show_profile(
     auth_note: Option<&(String, String)>,
     loading: bool,
     error: Option<&str>,
+    anonymous: bool,
 ) {
     let rect = ui.available_rect_before_wrap();
     ui.painter().rect_filled(
@@ -81,7 +83,10 @@ fn show_profile(
     let inner = rect.shrink(28.0);
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         ui.horizontal(|ui| {
-            if let Some(url) = profile.and_then(|profile| profile.display_pic_raw.as_deref()) {
+            if let Some(url) = profile
+                .filter(|_| !anonymous)
+                .and_then(|profile| profile.display_pic_raw.as_deref())
+            {
                 ui.add(
                     egui::Image::from_uri(url)
                         .fit_to_exact_size(egui::vec2(148.0, 148.0))
@@ -99,28 +104,40 @@ fn show_profile(
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 ui.add_space(8.0);
-                let gamertag = profile
-                    .and_then(|profile| profile.gamertag.as_deref())
-                    .unwrap_or("Not signed in");
+                let gamertag = if anonymous {
+                    if profile.is_some() {
+                        "Signed in"
+                    } else {
+                        "Not signed in"
+                    }
+                } else {
+                    profile
+                        .and_then(|profile| profile.gamertag.as_deref())
+                        .unwrap_or("Not signed in")
+                };
                 ui.label(
                     egui::RichText::new(gamertag)
                         .size(36.0)
                         .strong()
                         .color(if profile.is_some() { TEXT } else { MUTED }),
                 );
-                if let Some(modern) = profile.and_then(|profile| profile.modern_gamertag.as_deref())
+                if !anonymous
+                    && let Some(modern) =
+                        profile.and_then(|profile| profile.modern_gamertag.as_deref())
                 {
                     ui.label(egui::RichText::new(modern).size(16.0).color(MUTED));
                 }
-                let score = profile
-                    .and_then(|profile| profile.gamer_score.as_deref())
-                    .unwrap_or("—");
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(format!("{score} Gamerscore"))
-                        .size(20.0)
-                        .color(if profile.is_some() { ACCENT } else { MUTED }),
-                );
+                if !anonymous {
+                    let score = profile
+                        .and_then(|profile| profile.gamer_score.as_deref())
+                        .unwrap_or("—");
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!("{score} Gamerscore"))
+                            .size(20.0)
+                            .color(if profile.is_some() { ACCENT } else { MUTED }),
+                    );
+                }
             });
         });
 
@@ -178,8 +195,13 @@ fn show_profile(
         let Some(profile) = profile else {
             return;
         };
+        let xuid = if anonymous {
+            None
+        } else {
+            profile.xuid.as_deref()
+        };
         let facts = [
-            ("XUID", profile.xuid.as_deref()),
+            ("XUID", xuid),
             ("Account tier", profile.account_tier.as_deref()),
             ("Reputation", profile.reputation.as_deref()),
             ("Location", profile.location.as_deref()),

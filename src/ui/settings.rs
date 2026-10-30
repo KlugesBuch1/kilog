@@ -25,6 +25,13 @@ impl KilogApp {
             &mut self.config.spoof_open_achievements,
         );
         ui.add_space(8.0);
+        changed |= setting_row(
+            ui,
+            "Anonymous mode",
+            None,
+            &mut self.config.anonymous_mode,
+        );
+        ui.add_space(8.0);
         changed |= randomize_delays(ui, &mut self.config.randomize_delays);
 
         if changed {
