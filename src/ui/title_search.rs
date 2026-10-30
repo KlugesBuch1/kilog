@@ -141,7 +141,7 @@ impl KilogApp {
                 ui,
                 &mut self.title_search.query,
                 "Title ID or name",
-                440.0,
+                320.0,
             );
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if enter || search_button(ui, "Search", super::theme::SEARCH_OUTER_HEIGHT).clicked() {

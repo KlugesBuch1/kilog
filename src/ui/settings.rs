@@ -194,10 +194,16 @@ fn band_row(ui: &mut egui::Ui, label: &str, unit: &str, band: &mut DelayBand) ->
         changed |= switch(ui, &mut band.enabled);
         ui.label(egui::RichText::new(label).size(14.0).color(TEXT));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.label(egui::RichText::new(unit).size(12.0).color(MUTED));
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_sized(
+                egui::vec2(28.0, 18.0),
+                egui::Label::new(egui::RichText::new(unit).size(12.0).color(MUTED)),
+            );
+            ui.add_space(10.0);
             changed |= number_field(ui, &mut band.max);
+            ui.add_space(6.0);
             ui.label(egui::RichText::new("–").size(13.0).color(MUTED));
+            ui.add_space(6.0);
             changed |= number_field(ui, &mut band.min);
         });
     });

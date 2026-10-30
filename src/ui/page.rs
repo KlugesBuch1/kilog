@@ -34,7 +34,7 @@ impl Page {
             Self::AutoUnlock => "Auto Unlock",
             Self::Spoofing => "Spoofing",
             Self::TitleSearch => "Title search",
-            Self::Gamerpic => "Gamerpic Stealer",
+            Self::Gamerpic => "Gamerpic Downloader",
             Self::Settings => "Settings",
         }
     }

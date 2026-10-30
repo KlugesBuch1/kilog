@@ -92,22 +92,28 @@ impl KilogApp {
         let mut start = false;
         let mut stop = false;
 
-        let title_id = super::theme::search_field(ui, &mut self.spoof.title_id, "Title ID", 320.0);
-        if title_id.lost_focus() {
-            restart = true;
-            if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                start = true;
+        ui.horizontal(|ui| {
+            let title_id =
+                super::theme::search_field(ui, &mut self.spoof.title_id, "Title ID", 320.0);
+            if title_id.lost_focus() {
+                restart = true;
+                if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                    start = true;
+                }
             }
-        }
-        ui.add_space(14.0);
-
-        if self.spoof.live {
-            if accent_button(ui, "Stop Spoofing", 160.0).clicked() {
-                stop = true;
+            let label = if self.spoof.live {
+                "Stop Spoofing"
+            } else {
+                "Start Spoofing"
+            };
+            if accent_button(ui, label, super::theme::SEARCH_OUTER_HEIGHT).clicked() {
+                if self.spoof.live {
+                    stop = true;
+                } else {
+                    start = true;
+                }
             }
-        } else if accent_button(ui, "Start Spoofing", 160.0).clicked() {
-            start = true;
-        }
+        });
 
         if self.spoof.live {
             ui.add_space(18.0);
@@ -695,8 +701,14 @@ fn format_played(played: Duration) -> String {
     }
 }
 
-fn accent_button(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::click());
+fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), TEXT);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 28.0, height),
+        egui::Sense::click(),
+    );
     let fill = if response.hovered() {
         ACCENT.gamma_multiply(1.12)
     } else {
@@ -704,11 +716,12 @@ fn accent_button(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(15.0),
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
         TEXT,
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
