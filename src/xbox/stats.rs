@@ -1,8 +1,13 @@
 #![allow(dead_code)]
 
+use std::collections::{HashMap, HashSet};
+
 use serde_json::Value;
 
 use crate::error::Error;
+
+const LABEL_BATCH: usize = 10;
+const LABEL_NAME_BUDGET: usize = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatType {
@@ -30,6 +35,7 @@ impl StatType {
 pub struct UserStat {
     pub group: String,
     pub name: String,
+    pub label: String,
     pub stat_type: StatType,
     pub value: String,
 }
@@ -70,6 +76,75 @@ pub async fn fetch_user_stats(
         )));
     }
     parse_user_stats(&body)
+}
+
+pub async fn attach_stat_labels(
+    authorization: &str,
+    xuid: &str,
+    scid: &str,
+    stats: &mut [UserStat],
+) -> Result<(), Error> {
+    if stats.is_empty() {
+        return Ok(());
+    }
+    let xuid = xuid.trim();
+    if xuid.is_empty() {
+        return Err(Error::Xbox("xuid is empty".into()));
+    }
+    if authorization.trim().is_empty() {
+        return Err(Error::Xbox("authorization is empty".into()));
+    }
+    let scid = scid.trim();
+    if scid.is_empty() {
+        return Err(Error::Xbox("service config id is empty".into()));
+    }
+    let names = unique_stat_names(stats);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
+    let mut labels = HashMap::new();
+    for batch in label_batches(&names) {
+        let body = fetch_label_batch(&client, authorization, xuid, scid, &batch).await?;
+        labels.extend(parse_stat_labels(&body)?);
+    }
+    apply_stat_labels(stats, &labels);
+    Ok(())
+}
+
+async fn fetch_label_batch(
+    client: &reqwest::Client,
+    authorization: &str,
+    xuid: &str,
+    scid: &str,
+    names: &[&str],
+) -> Result<String, Error> {
+    let joined = names
+        .iter()
+        .copied()
+        .map(encode_stat_name)
+        .collect::<Vec<_>>()
+        .join(",");
+    let url = format!(
+        "https://userstats.xboxlive.com/users/xuid({xuid})/scids/{scid}/stats/{joined}"
+    );
+    let response = client
+        .get(url)
+        .header("Authorization", authorization)
+        .header("x-xbl-contract-version", "3")
+        .header("Accept", "application/json")
+        .query(&[("include", "valuemetadata")])
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        let snippet: String = body.chars().take(180).collect();
+        return Err(Error::Xbox(format!(
+            "stat labels returned {}: {snippet}",
+            status.as_u16()
+        )));
+    }
+    Ok(body)
 }
 
 fn parse_user_stats(body: &str) -> Result<Vec<UserStat>, Error> {
@@ -132,10 +207,151 @@ fn stat_from_entry(group: &str, entry: &Value) -> Option<UserStat> {
         .unwrap_or("");
     Some(UserStat {
         group: group.to_owned(),
+        label: name.to_owned(),
         name: name.to_owned(),
         stat_type: StatType::parse(raw_type),
         value: json_stat_value(entry.get("value")),
     })
+}
+
+fn unique_stat_names(stats: &[UserStat]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut names = Vec::new();
+    for stat in stats {
+        if stat.name.is_empty() || !seen.insert(stat.name.clone()) {
+            continue;
+        }
+        names.push(stat.name.clone());
+    }
+    names
+}
+
+fn label_batches(names: &[String]) -> Vec<Vec<&str>> {
+    let mut batches = Vec::new();
+    let mut current = Vec::new();
+    let mut length = 0;
+    for name in names {
+        let encoded = encode_stat_name(name).len();
+        let extra = encoded + usize::from(!current.is_empty());
+        if !current.is_empty() && (current.len() == LABEL_BATCH || length + extra > LABEL_NAME_BUDGET)
+        {
+            batches.push(std::mem::take(&mut current));
+            length = 0;
+        }
+        length += encoded + usize::from(!current.is_empty());
+        current.push(name.as_str());
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
+fn encode_stat_name(name: &str) -> String {
+    let mut encoded = String::new();
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn parse_stat_labels(body: &str) -> Result<HashMap<(String, String), String>, Error> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let value: Value = serde_json::from_str(body)?;
+    let mut labels = HashMap::new();
+    if let Some(groups) = value
+        .get("groups")
+        .or_else(|| value.get("Groups"))
+        .filter(|groups| !groups.is_null())
+        .and_then(Value::as_array)
+    {
+        for group in groups.iter().filter_map(Value::as_object) {
+            let group_name = group
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_owned();
+            collect_list_labels(
+                group
+                    .get("statlistscollection")
+                    .or_else(|| group.get("statListsCollection")),
+                &group_name,
+                &mut labels,
+            );
+        }
+    }
+    collect_list_labels(
+        value
+            .get("statlistscollection")
+            .or_else(|| value.get("statListsCollection")),
+        "",
+        &mut labels,
+    );
+    Ok(labels)
+}
+
+fn collect_list_labels(
+    lists: Option<&Value>,
+    group: &str,
+    labels: &mut HashMap<(String, String), String>,
+) {
+    let Some(lists) = lists.and_then(Value::as_array) else {
+        return;
+    };
+    for list in lists {
+        let Some(entries) = list.get("stats").and_then(Value::as_array) else {
+            continue;
+        };
+        for entry in entries {
+            let Some(name) = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            let Some(label) = stat_display_name(entry) else {
+                continue;
+            };
+            labels.insert((group.to_owned(), name.to_owned()), label);
+        }
+    }
+}
+
+fn stat_display_name(entry: &Value) -> Option<String> {
+    let properties = entry
+        .get("properties")
+        .and_then(|properties| properties.get("DisplayName"))
+        .and_then(Value::as_str);
+    let group = entry
+        .get("groupproperties")
+        .and_then(|properties| properties.get("DisplayName"))
+        .and_then(Value::as_str);
+    let label = properties.or(group)?.trim();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.to_owned())
+    }
+}
+
+fn apply_stat_labels(stats: &mut [UserStat], labels: &HashMap<(String, String), String>) {
+    for stat in stats {
+        let grouped = (stat.group.clone(), stat.name.clone());
+        let ungrouped = (String::new(), stat.name.clone());
+        if let Some(label) = labels.get(&grouped).or_else(|| labels.get(&ungrouped)) {
+            stat.label = label.clone();
+        }
+    }
 }
 
 fn json_stat_value(value: Option<&Value>) -> String {
@@ -221,6 +437,7 @@ mod tests {
         assert_eq!(stats.len(), 4);
         assert_eq!(stats[0].group, "Garage");
         assert_eq!(stats[0].name, "CarsOwned");
+        assert_eq!(stats[0].label, "CarsOwned");
         assert_eq!(stats[0].stat_type, StatType::Integer);
         assert_eq!(stats[0].value, "12");
         assert_eq!(stats[1].name, "MoneyEarned");
@@ -263,6 +480,114 @@ mod tests {
                 "service config id is empty"
             );
         });
+    }
+
+    #[test]
+    fn hub_labels_merge_onto_stat_records() {
+        let mut stats = parse_user_stats(
+            r#"{
+            "groups": [
+                {
+                    "name": "Garage",
+                    "statlistscollection": [
+                        {
+                            "stats": [
+                                {"name": "CarsOwned", "type": "Integer", "value": "12"},
+                                {"name": "MoneyEarned", "type": "Double", "value": "10"},
+                                {"name": "FavoriteCar", "type": "String", "value": "Sentinel"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Profile",
+                    "statlistscollection": [
+                        {
+                            "stats": [
+                                {"name": "Badge", "type": "Integer", "value": "1"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }"#,
+        )
+        .unwrap();
+        let labels = super::parse_stat_labels(
+            r#"{
+            "groups": [
+                {
+                    "name": "Garage",
+                    "statlistscollection": [
+                        {
+                            "stats": [
+                                {
+                                    "groupproperties": {
+                                        "Ordinal": 1,
+                                        "SortOrder": "Descending",
+                                        "DisplayName": "Group label",
+                                        "DisplayFormat": "Integer",
+                                        "DisplaySemantic": "None"
+                                    },
+                                    "name": "CarsOwned",
+                                    "type": "Integer",
+                                    "value": "12",
+                                    "properties": {"DisplayName": "Cars owned"}
+                                },
+                                {
+                                    "groupproperties": {"DisplayName": "Money earned"},
+                                    "name": "MoneyEarned",
+                                    "type": "Double",
+                                    "value": 10,
+                                    "properties": {}
+                                },
+                                {
+                                    "name": "FavoriteCar",
+                                    "type": "String",
+                                    "value": "Sentinel",
+                                    "properties": {"DisplayName": "  "}
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "statlistscollection": [
+                {
+                    "stats": [
+                        {
+                            "name": "MinutesPlayed",
+                            "type": "Integer",
+                            "value": "90",
+                            "properties": {"DisplayName": "Minutes played"}
+                        }
+                    ]
+                }
+            ]
+        }"#,
+        )
+        .unwrap();
+        super::apply_stat_labels(&mut stats, &labels);
+        assert_eq!(stats[0].label, "Cars owned");
+        assert_eq!(stats[0].value, "12");
+        assert_eq!(stats[1].label, "Money earned");
+        assert_eq!(stats[2].label, "FavoriteCar");
+        assert_eq!(stats[3].label, "Badge");
+        assert!(stats.iter().all(|stat| stat.name != "MinutesPlayed"));
+    }
+
+    #[test]
+    fn label_requests_stay_within_the_documented_batch() {
+        let names: Vec<String> = (0..11).map(|index| format!("Stat{index}")).collect();
+        let batches = super::label_batches(&names);
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].len(), 10);
+        assert_eq!(batches[1], vec!["Stat10"]);
+
+        let long = "N".repeat(601);
+        let names = [long];
+        let batches = super::label_batches(&names);
+        assert_eq!(batches, vec![vec![names[0].as_str()]]);
     }
 
     #[test]
