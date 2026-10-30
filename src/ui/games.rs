@@ -236,9 +236,9 @@ fn paint_grid(
 fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::click());
     let fill = if response.hovered() {
-        Color32::from_rgb(32, 35, 42)
+        super::theme::CARD_HOVER
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(12), fill);
@@ -255,7 +255,7 @@ fn title_card(ui: &mut egui::Ui, title: &Title, card_w: f32, card_h: f32) -> egu
         ui.painter().rect_filled(
             image,
             egui::CornerRadius::same(10),
-            Color32::from_rgb(38, 41, 48),
+            super::theme::CARD_RAISED,
         );
         Lucide::Gamepad2
             .size(28.0)
@@ -312,11 +312,8 @@ fn achievement_bar(ui: &mut egui::Ui, rect: egui::Rect, title: &Title) {
         .map(|achievement| achievement.progress_percentage)
         .unwrap_or(0.0);
     let fraction = (progress / 100.0).clamp(0.0, 1.0) as f32;
-    ui.painter().rect_filled(
-        rect,
-        egui::CornerRadius::same(6),
-        Color32::from_rgb(38, 41, 48),
-    );
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(6), super::theme::CARD_RAISED);
     if fraction > 0.0 {
         let mut fill = rect;
         fill.set_width((rect.width() * fraction).max(6.0));
@@ -375,11 +372,8 @@ fn platform_tags(ui: &mut egui::Ui, rect: egui::Rect, devices: &[String]) {
             break;
         }
         let chip = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(chip_w, 18.0));
-        ui.painter().rect_filled(
-            chip,
-            egui::CornerRadius::same(4),
-            Color32::from_rgb(46, 49, 58),
-        );
+        ui.painter()
+            .rect_filled(chip, egui::CornerRadius::same(4), super::theme::BORDER);
         ui.painter().galley(
             egui::pos2(x + 6.0, chip.center().y - galley.size().y / 2.0),
             galley,
@@ -397,7 +391,7 @@ fn toolbar_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

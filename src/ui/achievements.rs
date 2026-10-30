@@ -728,54 +728,50 @@ fn paint_board(
 
 fn game_header(ui: &mut egui::Ui, title: &Title, board: Option<&TitleAchievements>) {
     let width = ui.available_width();
-    egui::Frame::new()
-        .fill(Color32::from_rgb(26, 28, 34))
-        .corner_radius(egui::CornerRadius::same(12))
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_width((width - 32.0).max(0.0));
-            ui.horizontal_top(|ui| {
-                cover(ui, title, 72.0);
-                ui.add_space(14.0);
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    let name = title
-                        .name
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or("Unknown");
-                    ui.label(egui::RichText::new(name).size(20.0).strong().color(TEXT));
-                    if let Some(id) = title.title_id.as_deref().filter(|id| !id.is_empty()) {
-                        ui.label(egui::RichText::new(id).size(13.0).color(MUTED));
-                    }
-                    if let Some(board) = board {
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            let mark = 16.0;
-                            let (rect, _) = ui
-                                .allocate_exact_size(egui::vec2(mark, mark), egui::Sense::hover());
-                            super::theme::gamerscore_icon(ui, rect);
-                            ui.label(
-                                egui::RichText::new(board.gamerscore_label())
-                                    .size(15.0)
-                                    .strong()
-                                    .color(TEXT),
-                            );
-                            ui.add_space(14.0);
-                            ui.label(
-                                egui::RichText::new(board.unlocked_label())
-                                    .size(15.0)
-                                    .color(MUTED),
-                            );
-                        });
-                        ui.add_space(8.0);
-                        progress_bar(ui, board.progress_fraction());
-                    }
-                });
+    super::theme::card_frame().show(ui, |ui| {
+        ui.set_width((width - 32.0).max(0.0));
+        ui.horizontal_top(|ui| {
+            cover(ui, title, 72.0);
+            ui.add_space(14.0);
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                let name = title
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("Unknown");
+                ui.label(egui::RichText::new(name).size(20.0).strong().color(TEXT));
+                if let Some(id) = title.title_id.as_deref().filter(|id| !id.is_empty()) {
+                    ui.label(egui::RichText::new(id).size(13.0).color(MUTED));
+                }
+                if let Some(board) = board {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let mark = 16.0;
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(mark, mark), egui::Sense::hover());
+                        super::theme::gamerscore_icon(ui, rect);
+                        ui.label(
+                            egui::RichText::new(board.gamerscore_label())
+                                .size(15.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.add_space(14.0);
+                        ui.label(
+                            egui::RichText::new(board.unlocked_label())
+                                .size(15.0)
+                                .color(MUTED),
+                        );
+                    });
+                    ui.add_space(8.0);
+                    progress_bar(ui, board.progress_fraction());
+                }
             });
         });
+    });
 }
 
 fn cover(ui: &mut egui::Ui, title: &Title, size: f32) {
@@ -790,7 +786,7 @@ fn cover(ui: &mut egui::Ui, title: &Title, size: f32) {
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::same(10),
-            Color32::from_rgb(38, 41, 48),
+            super::theme::CARD_RAISED,
         );
         Lucide::Gamepad2
             .size(26.0)
@@ -808,11 +804,8 @@ fn progress_bar(ui: &mut egui::Ui, fraction: f32) {
     let fraction = fraction.clamp(0.0, 1.0);
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 8.0), egui::Sense::hover());
-    ui.painter().rect_filled(
-        rect,
-        egui::CornerRadius::same(4),
-        Color32::from_rgb(38, 41, 48),
-    );
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(4), super::theme::CARD_RAISED);
     if fraction > 0.0 {
         let mut fill = rect;
         fill.set_width((rect.width() * fraction).clamp(4.0, rect.width()));
@@ -844,9 +837,9 @@ fn list_search_field(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
     let width = 220.0;
     let icon = 14.0;
     egui::Frame::new()
-        .fill(Color32::from_rgb(26, 28, 34))
-        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
-        .corner_radius(egui::CornerRadius::same(8))
+        .fill(super::theme::CARD)
+        .stroke(egui::Stroke::new(1.0, super::theme::BORDER))
+        .corner_radius(egui::CornerRadius::same(super::theme::RADIUS))
         .inner_margin(egui::Margin::symmetric(10, 0))
         .show(ui, |ui| {
             ui.set_width(width - 20.0);
@@ -889,12 +882,12 @@ fn filter_chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response
     let fill = if selected {
         ACCENT.gamma_multiply(0.22)
     } else if response.hovered() {
-        Color32::from_rgb(32, 35, 42)
+        super::theme::CARD_HOVER
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,
@@ -999,11 +992,11 @@ fn achievement_card(
     let (rect, response) = ui.allocate_exact_size(egui::vec2(card_w, CARD_H), egui::Sense::hover());
     let unlocked = achievement.is_unlocked();
     let fill = if response.hovered() {
-        Color32::from_rgb(32, 35, 42)
+        super::theme::CARD_HOVER
     } else if unlocked {
-        Color32::from_rgb(22, 23, 27)
+        super::theme::SIDEBAR
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
@@ -1103,7 +1096,7 @@ fn achievement_card(
             },
         );
         let fill = if pending || !unlocks_enabled {
-            Color32::from_rgb(46, 49, 58)
+            super::theme::BORDER
         } else if click.hovered() {
             ACCENT.gamma_multiply(1.12)
         } else {
@@ -1146,8 +1139,8 @@ fn paint_icon(ui: &egui::Ui, rect: egui::Rect, url: Option<&str>, unlocked: bool
     } else {
         ui.painter().rect_filled(
             rect,
-            egui::CornerRadius::same(8),
-            Color32::from_rgb(38, 41, 48),
+            egui::CornerRadius::same(super::theme::RADIUS),
+            super::theme::CARD_RAISED,
         );
         Lucide::Trophy
             .size(18.0)
@@ -1162,8 +1155,8 @@ fn paint_icon(ui: &egui::Ui, rect: egui::Rect, url: Option<&str>, unlocked: bool
     if unlocked {
         ui.painter().rect_filled(
             rect,
-            egui::CornerRadius::same(8),
-            Color32::from_rgba_unmultiplied(16, 17, 20, 120),
+            egui::CornerRadius::same(super::theme::RADIUS),
+            Color32::from_rgba_unmultiplied(18, 19, 28, 120),
         );
     }
 }
@@ -1253,7 +1246,7 @@ fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,

@@ -8,6 +8,7 @@ mod sidebar;
 mod spoofing;
 mod theme;
 mod title_search;
+mod titlebar;
 
 use crate::auth::{MicrosoftOAuthResponse, XboxAuthorization};
 use crate::config::AppConfig;
@@ -473,9 +474,10 @@ impl eframe::App for KilogApp {
             let ctx = ui.ctx().clone();
             self.start_login(ctx);
         }
+        titlebar::title_bar(ui);
         egui::Panel::left("sidebar")
             .resizable(false)
-            .show_separator_line(false)
+            .show_separator_line(true)
             .default_size(228.0)
             .min_size(228.0)
             .max_size(228.0)
@@ -494,6 +496,7 @@ impl eframe::App for KilogApp {
             )
             .show(ui, |ui| self.content(ui));
         event_drop_overlay(ui.ctx());
+        titlebar::window_chrome(ui.ctx());
     }
 }
 
@@ -510,7 +513,7 @@ fn event_drop_overlay(ctx: &egui::Context) {
     painter.rect_filled(
         rect,
         egui::CornerRadius::ZERO,
-        egui::Color32::from_rgba_unmultiplied(16, 17, 20, 210),
+        egui::Color32::from_rgba_unmultiplied(18, 19, 28, 210),
     );
     painter.text(
         rect.center(),

@@ -5,12 +5,20 @@ use egui_lucide::Lucide;
 
 static TIME_FONT: AtomicBool = AtomicBool::new(false);
 
-pub const CANVAS: Color32 = Color32::from_rgb(16, 17, 20);
-pub const SIDEBAR: Color32 = Color32::from_rgb(22, 24, 29);
-pub const TEXT: Color32 = Color32::from_rgb(236, 237, 240);
-pub const MUTED: Color32 = Color32::from_rgb(148, 154, 166);
-pub const ACCENT: Color32 = Color32::from_rgb(194, 43, 114);
-
+pub const CANVAS: Color32 = Color32::from_rgb(0x12, 0x13, 0x1C);
+pub const SIDEBAR: Color32 = Color32::from_rgb(0x0E, 0x0F, 0x16);
+pub const CARD: Color32 = Color32::from_rgb(0x1E, 0x1F, 0x2E);
+pub const CARD_HOVER: Color32 = Color32::from_rgb(0x28, 0x2A, 0x3F);
+pub const CARD_RAISED: Color32 = Color32::from_rgb(0x34, 0x36, 0x50);
+pub const BORDER: Color32 = Color32::from_rgba_premultiplied(22, 22, 22, 22);
+pub const CARD_BORDER: Color32 = Color32::from_rgba_premultiplied(15, 15, 15, 15);
+pub const ACTIVE_ICON: Color32 = Color32::WHITE;
+pub const TEXT: Color32 = Color32::from_rgb(0xE2, 0xE8, 0xF0);
+pub const MUTED: Color32 = Color32::from_rgb(0x94, 0xA3, 0xB8);
+pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x3A, 0xED);
+pub const RADIUS: u8 = 10;
+pub const CARD_RADIUS: u8 = 12;
+pub const TITLE_BAR_HEIGHT: f32 = 38.0;
 pub(super) fn gamerscore_icon(ui: &egui::Ui, rect: egui::Rect) {
     egui::Image::new(egui::include_image!("../../assets/img/gamerscore.svg"))
         .fit_to_exact_size(rect.size())
@@ -27,9 +35,9 @@ pub(super) fn search_field(
     let icon_size = 16.0;
     let text_width = width - 28.0 - icon_size - 12.0;
     egui::Frame::new()
-        .fill(Color32::from_rgb(26, 28, 34))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
-        .corner_radius(CornerRadius::same(8))
+        .fill(CARD)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(egui::Margin::symmetric(14, 0))
         .show(ui, |ui| {
             ui.set_width(width - 28.0);
@@ -69,9 +77,9 @@ pub(super) fn text_field(
     let icon_size = 16.0;
     let text_width = width - 28.0 - icon_size - 12.0;
     egui::Frame::new()
-        .fill(Color32::from_rgb(26, 28, 34))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(46, 49, 58)))
-        .corner_radius(CornerRadius::same(8))
+        .fill(CARD)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(egui::Margin::symmetric(14, 0))
         .show(ui, |ui| {
             ui.set_width(width - 28.0);
@@ -128,24 +136,39 @@ fn install_time_font(ctx: &egui::Context) {
     TIME_FONT.store(true, Ordering::Relaxed);
 }
 
+pub(super) fn card_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0, CARD_BORDER))
+        .corner_radius(CornerRadius::same(CARD_RADIUS))
+        .inner_margin(egui::Margin::same(16))
+}
+
 fn visuals() -> Visuals {
     let mut visuals = Visuals::dark();
     visuals.override_text_color = Some(TEXT);
     visuals.weak_text_color = Some(MUTED);
     visuals.hyperlink_color = ACCENT;
     visuals.panel_fill = CANVAS;
-    visuals.window_fill = CANVAS;
-    let field = Color32::from_rgb(26, 28, 34);
-    let field_hover = Color32::from_rgb(32, 35, 42);
-    visuals.extreme_bg_color = field;
-    visuals.text_edit_bg_color = Some(field);
-    visuals.faint_bg_color = field_hover;
-    visuals.window_corner_radius = CornerRadius::same(10);
-    visuals.selection.bg_fill = Color32::from_rgb(92, 24, 56);
-    visuals.window_stroke.color = Color32::from_rgb(46, 49, 58);
+    visuals.window_fill = CARD;
+    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.window_corner_radius = CornerRadius::same(CARD_RADIUS);
+    visuals.menu_corner_radius = CornerRadius::same(RADIUS);
+    visuals.window_shadow = egui::Shadow {
+        offset: [0, 10],
+        blur: 28,
+        spread: 0,
+        color: Color32::from_black_alpha(110),
+    };
+    visuals.popup_shadow = visuals.window_shadow;
+    visuals.extreme_bg_color = CARD;
+    visuals.text_edit_bg_color = Some(CARD);
+    visuals.faint_bg_color = CARD_HOVER;
+    visuals.selection.bg_fill = ACCENT.gamma_multiply(0.55);
+    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
 
-    let radius = CornerRadius::same(8);
-    let stroke = Stroke::new(1.0, Color32::from_rgb(46, 49, 58));
+    let radius = CornerRadius::same(RADIUS);
+    let border = Stroke::new(1.0, BORDER);
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -154,15 +177,22 @@ fn visuals() -> Visuals {
         &mut visuals.widgets.open,
     ] {
         widget.corner_radius = radius;
-        widget.bg_stroke = stroke;
+        widget.bg_stroke = border;
         widget.fg_stroke = Stroke::new(1.0, TEXT);
+        widget.expansion = 0.0;
     }
-    visuals.widgets.inactive.bg_fill = field;
-    visuals.widgets.inactive.weak_bg_fill = field;
-    visuals.widgets.hovered.bg_fill = field_hover;
-    visuals.widgets.hovered.weak_bg_fill = field_hover;
-    visuals.widgets.active.bg_fill = field_hover;
-    visuals.widgets.open.bg_fill = field;
+    visuals.widgets.noninteractive.bg_fill = CARD;
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
+    visuals.widgets.inactive.bg_fill = CARD;
+    visuals.widgets.inactive.weak_bg_fill = CARD;
+    visuals.widgets.hovered.bg_fill = CARD_HOVER;
+    visuals.widgets.hovered.weak_bg_fill = CARD_HOVER;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT.gamma_multiply(0.6));
+    visuals.widgets.active.bg_fill = ACCENT;
+    visuals.widgets.active.weak_bg_fill = ACCENT;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.open.bg_fill = CARD;
+    visuals.widgets.open.weak_bg_fill = CARD;
 
     visuals
 }

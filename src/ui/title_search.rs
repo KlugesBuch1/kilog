@@ -599,14 +599,14 @@ fn result_row(ui: &mut egui::Ui, title: &Title, selected: bool) -> egui::Respons
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::click());
     let fill = if selected {
-        Color32::from_rgb(46, 24, 36)
+        super::theme::ACCENT.gamma_multiply(0.22)
     } else if response.hovered() {
-        Color32::from_rgb(32, 35, 42)
+        super::theme::CARD_HOVER
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     let inner = rect.shrink2(egui::vec2(12.0, 0.0));
     let id_galley =
         ui.painter()
@@ -649,9 +649,7 @@ fn detail_panel(
         egui::vec2(DETAIL_W, height),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
-            egui::Frame::new()
-                .fill(Color32::from_rgb(26, 28, 34))
-                .corner_radius(egui::CornerRadius::same(12))
+            super::theme::card_frame()
                 .inner_margin(egui::Margin::same(14))
                 .show(ui, |ui| {
                     ui.set_width(DETAIL_W - 28.0);
@@ -668,7 +666,7 @@ fn detail_panel(
                         ui.painter().rect_filled(
                             image,
                             egui::CornerRadius::same(10),
-                            Color32::from_rgb(38, 41, 48),
+                            super::theme::CARD_RAISED,
                         );
                         Lucide::Gamepad2
                             .size(28.0)
@@ -751,7 +749,7 @@ fn copy_button(ui: &mut egui::Ui, copied: bool) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -778,7 +776,7 @@ fn search_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,

@@ -608,44 +608,40 @@ fn art_from(title: &Title, title_id: u64) -> SpoofArt {
 }
 
 fn cover_card(ui: &mut egui::Ui, spoof: &SpoofState) {
-    egui::Frame::new()
-        .fill(Color32::from_rgb(26, 28, 34))
-        .corner_radius(egui::CornerRadius::same(12))
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                cover_image(ui, spoof.cover_url.as_deref());
-                ui.add_space(8.0);
-                ui.vertical(|ui| {
-                    ui.add_space(4.0);
+    super::theme::card_frame().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            cover_image(ui, spoof.cover_url.as_deref());
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(&spoof.active_name)
+                        .size(20.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                if let Some(title_id) = spoof.active_title {
                     ui.label(
-                        egui::RichText::new(&spoof.active_name)
-                            .size(20.0)
-                            .strong()
-                            .color(TEXT),
+                        egui::RichText::new(title_id.to_string())
+                            .size(13.0)
+                            .color(MUTED),
                     );
-                    if let Some(title_id) = spoof.active_title {
-                        ui.label(
-                            egui::RichText::new(title_id.to_string())
-                                .size(13.0)
-                                .color(MUTED),
-                        );
-                    }
-                    ui.add_space(14.0);
-                    let spoofed = spoof
-                        .started_at
-                        .map(|started| format_clock(started.elapsed()))
-                        .unwrap_or_else(|| "00:00:00".to_owned());
-                    fact(ui, "Spoofed", &spoofed);
-                    ui.add_space(8.0);
-                    let played = match &spoof.played {
-                        PlayedSnapshot::Duration(played) => format_played(*played),
-                        PlayedSnapshot::Unknown => "—".to_owned(),
-                    };
-                    fact(ui, "Time Played", &played);
-                });
+                }
+                ui.add_space(14.0);
+                let spoofed = spoof
+                    .started_at
+                    .map(|started| format_clock(started.elapsed()))
+                    .unwrap_or_else(|| "00:00:00".to_owned());
+                fact(ui, "Spoofed", &spoofed);
+                ui.add_space(8.0);
+                let played = match &spoof.played {
+                    PlayedSnapshot::Duration(played) => format_played(*played),
+                    PlayedSnapshot::Unknown => "—".to_owned(),
+                };
+                fact(ui, "Time Played", &played);
             });
         });
+    });
 }
 
 fn cover_image(ui: &mut egui::Ui, url: Option<&str>) {
@@ -662,7 +658,7 @@ fn cover_image(ui: &mut egui::Ui, url: Option<&str>) {
     ui.painter().rect_filled(
         rect,
         egui::CornerRadius::same(12),
-        Color32::from_rgb(38, 41, 48),
+        super::theme::CARD_RAISED,
     );
     Lucide::Gamepad2
         .size(32.0)
@@ -707,7 +703,7 @@ fn accent_button(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

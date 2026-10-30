@@ -1221,9 +1221,9 @@ fn queue_row(
             Color32::from_rgb(146, 220, 164),
         )
     } else if skip {
-        (Color32::from_rgb(22, 23, 27), MUTED, MUTED)
+        (super::theme::SIDEBAR, MUTED, MUTED)
     } else {
-        (Color32::from_rgb(26, 28, 34), TEXT, TEXT)
+        (super::theme::CARD, TEXT, TEXT)
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
@@ -1413,14 +1413,14 @@ fn tool_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response 
         },
     );
     let fill = if !enabled {
-        Color32::from_rgb(38, 41, 48)
+        super::theme::CARD_RAISED
     } else if response.hovered() {
         ACCENT.gamma_multiply(1.12)
     } else {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,

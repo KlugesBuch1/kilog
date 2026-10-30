@@ -25,12 +25,7 @@ impl KilogApp {
             &mut self.config.spoof_open_achievements,
         );
         ui.add_space(8.0);
-        changed |= setting_row(
-            ui,
-            "Anonymous mode",
-            None,
-            &mut self.config.anonymous_mode,
-        );
+        changed |= setting_row(ui, "Anonymous mode", None, &mut self.config.anonymous_mode);
         ui.add_space(8.0);
         changed |= randomize_delays(ui, &mut self.config.randomize_delays);
 
@@ -59,7 +54,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, badge: Option<&str>, value: &mut 
     let fill = if response.hovered() {
         Color32::from_rgba_unmultiplied(255, 255, 255, 12)
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
@@ -86,11 +81,8 @@ fn setting_row(ui: &mut egui::Ui, label: &str, badge: Option<&str>, value: &mut 
             ),
             egui::vec2(badge_galley.size().x + 12.0, 18.0),
         );
-        ui.painter().rect_filled(
-            chip,
-            egui::CornerRadius::same(4),
-            Color32::from_rgb(46, 49, 58),
-        );
+        ui.painter()
+            .rect_filled(chip, egui::CornerRadius::same(4), super::theme::BORDER);
         ui.painter().galley(
             egui::pos2(
                 chip.left() + 6.0,
@@ -105,11 +97,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, badge: Option<&str>, value: &mut 
         egui::pos2(rect.right() - 34.0, rect.center().y),
         egui::vec2(36.0, 20.0),
     );
-    let track_fill = if *value {
-        ACCENT
-    } else {
-        Color32::from_rgb(46, 49, 58)
-    };
+    let track_fill = if *value { ACCENT } else { super::theme::BORDER };
     ui.painter()
         .rect_filled(track, egui::CornerRadius::same(10), track_fill);
 
@@ -142,9 +130,7 @@ fn randomize_delays(ui: &mut egui::Ui, settings: &mut crate::config::DelayRandom
 
     ui.add_space(8.0);
     let mut changed = false;
-    egui::Frame::new()
-        .fill(Color32::from_rgb(22, 24, 29))
-        .corner_radius(egui::CornerRadius::same(10))
+    super::theme::card_frame()
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
             ui.label(
@@ -155,13 +141,13 @@ fn randomize_delays(ui: &mut egui::Ui, settings: &mut crate::config::DelayRandom
                 .color(MUTED),
             );
             ui.add_space(10.0);
-            changed |= band_row(ui, ">1 min", "s", &mut settings.over_1_min);
+            changed |= band_row(ui, ">1 min", "sec", &mut settings.over_1_min);
             ui.add_space(8.0);
-            changed |= band_row(ui, ">10 min", "s", &mut settings.over_10_min);
+            changed |= band_row(ui, ">10 min", "sec", &mut settings.over_10_min);
             ui.add_space(8.0);
             changed |= band_row(ui, ">1 h", "min", &mut settings.over_1_hour);
             ui.add_space(8.0);
-            changed |= band_row(ui, ">5 h", "h", &mut settings.over_5_hours);
+            changed |= band_row(ui, ">5 h", "hrs", &mut settings.over_5_hours);
         });
     changed
 }
@@ -172,7 +158,7 @@ fn dropdown_header(ui: &mut egui::Ui, label: &str, open: bool) -> bool {
     let fill = if response.hovered() {
         Color32::from_rgba_unmultiplied(255, 255, 255, 12)
     } else {
-        Color32::from_rgb(26, 28, 34)
+        super::theme::CARD
     };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
@@ -220,11 +206,7 @@ fn band_row(ui: &mut egui::Ui, label: &str, unit: &str, band: &mut DelayBand) ->
 
 fn switch(ui: &mut egui::Ui, value: &mut bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 20.0), egui::Sense::click());
-    let fill = if *value {
-        ACCENT
-    } else {
-        Color32::from_rgb(46, 49, 58)
-    };
+    let fill = if *value { ACCENT } else { super::theme::BORDER };
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(10), fill);
     let knob_x = if *value {

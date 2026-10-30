@@ -75,12 +75,25 @@ fn show_profile(
     anonymous: bool,
 ) {
     let rect = ui.available_rect_before_wrap();
-    ui.painter().rect_filled(
-        rect,
-        egui::CornerRadius::same(16),
-        egui::Color32::from_rgb(26, 28, 34),
+    let radius = egui::CornerRadius::same(16);
+    let painter = ui.painter();
+    painter.add(
+        egui::Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(70),
+        }
+        .as_shape(rect, radius),
     );
-    let inner = rect.shrink(28.0);
+    painter.rect_filled(rect, radius, super::theme::CARD);
+    painter.rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, super::theme::CARD_BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let inner = rect.shrink(36.0);
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         ui.horizontal(|ui| {
             if let Some(url) = profile
@@ -98,11 +111,12 @@ fn show_profile(
                 ui.painter().rect_filled(
                     rect,
                     egui::CornerRadius::same(16),
-                    egui::Color32::from_rgb(38, 41, 48),
+                    super::theme::CARD_RAISED,
                 );
             }
-            ui.add_space(8.0);
+            ui.add_space(24.0);
             ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
                 ui.add_space(8.0);
                 let gamertag = if anonymous {
                     if profile.is_some() {
@@ -131,7 +145,7 @@ fn show_profile(
                     let score = profile
                         .and_then(|profile| profile.gamer_score.as_deref())
                         .unwrap_or("—");
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new(format!("{score} Gamerscore"))
                             .size(20.0)
@@ -141,7 +155,7 @@ fn show_profile(
             });
         });
 
-        ui.add_space(28.0);
+        ui.add_space(32.0);
         if let Some(err) = error {
             ui.label(
                 egui::RichText::new(err)
@@ -207,18 +221,26 @@ fn show_profile(
             ("Location", profile.location.as_deref()),
             ("Bio", profile.bio.as_deref()),
         ];
-        for (label, value) in facts {
-            let Some(value) = value.filter(|value| !value.is_empty()) else {
-                continue;
-            };
+        let rows: Vec<_> = facts
+            .into_iter()
+            .filter_map(|(label, value)| {
+                value
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (label, value))
+            })
+            .collect();
+        for (index, (label, value)) in rows.into_iter().enumerate() {
+            if index > 0 {
+                ui.add(egui::Separator::default().spacing(24.0));
+            }
             fact_row(ui, label, value);
-            ui.add_space(10.0);
         }
     });
 }
 
 fn fact_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(egui::RichText::new(label).size(13.0).color(MUTED));
+    ui.label(egui::RichText::new(label).size(12.5).color(MUTED));
+    ui.add_space(6.0);
     ui.label(egui::RichText::new(value).size(16.0).color(TEXT));
 }
 
@@ -230,7 +252,7 @@ fn login_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         ACCENT
     };
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), fill);
+        .rect_filled(rect, egui::CornerRadius::same(super::theme::RADIUS), fill);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
