@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="kilog">
+  <defs>
+    <clipPath id="kilog-arms">
+      <rect x="400" width="624" height="1024"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="#121212"/>
+  <g fill="none" stroke="#7C3AED" stroke-width="80" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="440" cy="302" r="98"/>
+    <path d="M440 406V820"/>
+    <path d="M682 401L415 610L682 820" clip-path="url(#kilog-arms)"/>
+  </g>
+</svg>
