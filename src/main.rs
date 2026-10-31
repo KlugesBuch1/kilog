@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("kilog")
+            .with_icon(app_icon())
             .with_decorations(false)
             .with_inner_size([1120.0, 740.0])
             .with_min_inner_size([860.0, 540.0])
@@ -63,4 +64,31 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     Ok(())
+}
+
+fn app_icon() -> egui::IconData {
+    const SVG: &[u8] = include_bytes!("../docs/assets/logo.svg");
+    const SIZE: u32 = 256;
+
+    let tree = resvg::usvg::Tree::from_data(SVG, &resvg::usvg::Options::default())
+        .expect("logo.svg");
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(SIZE, SIZE).expect("app icon pixmap");
+    let scale = SIZE as f32 / tree.size().width();
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let color = pixel.demultiply();
+        rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
+    }
+
+    egui::IconData {
+        rgba,
+        width: SIZE,
+        height: SIZE,
+    }
 }
