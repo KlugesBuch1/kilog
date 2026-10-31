@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="kilog" width="128">
+  <img src="docs/assets/logo-github.svg" alt="kilog" width="128">
 </p>
 
 <h1 align="center">kilog</h1>
