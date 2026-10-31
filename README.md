@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.png" alt="kilog" width="100%">
+  <img src="docs/assets/logo.svg" alt="kilog" width="128">
 </p>
 
 <h1 align="center">kilog</h1>
@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built_with-Rust-7C3AED?style=flat-square" alt="Built with Rust"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-7C3AED?style=flat-square" alt="GPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-7C3AED?style=flat-square" alt="GPL-3.0-only"></a>
   <a href="https://github.com/KlugesBuch1/kilog/stargazers"><img src="https://img.shields.io/github/stars/KlugesBuch1/kilog?style=flat-square&color=7C3AED" alt="GitHub stars"></a>
   <a href="https://github.com/KlugesBuch1/kilog/releases"><img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Android%20%C2%B7%20iOS-7C3AED?style=flat-square" alt="Windows, Android, and iOS"></a>
 </p>
