@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="kilog">
   <defs>
     <radialGradient id="spot" cx="50%" cy="46%" r="52%">
-      <stop offset="0%" stop-color="#7C3AED" stop-opacity="0.24"/>
-      <stop offset="50%" stop-color="#7C3AED" stop-opacity="0.06"/>
-      <stop offset="100%" stop-color="#7C3AED" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#EC3D78" stop-opacity="0.24"/>
+      <stop offset="50%" stop-color="#EC3D78" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#EC3D78" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="vignette" cx="50%" cy="48%" r="72%">
       <stop offset="58%" stop-color="#0E0F16" stop-opacity="0"/>
@@ -11,7 +11,7 @@
     </radialGradient>
     <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="0" y1="118" x2="0" y2="300">
       <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#E4DCFB"/>
+      <stop offset="100%" stop-color="#FBDCE6"/>
     </linearGradient>
     <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.055"/>
@@ -42,7 +42,7 @@
     <rect width="1280" height="640" fill="#0E0F16"/>
     <rect width="1280" height="640" fill="url(#spot)"/>
 
-    <g fill="none" stroke="#7C3AED" stroke-width="1.25" mask="url(#field)">
+    <g fill="none" stroke="#EC3D78" stroke-width="1.25" mask="url(#field)">
       <circle cx="640" cy="290" r="420" opacity="0.26"/>
       <circle cx="640" cy="290" r="500" opacity="0.15"/>
       <circle cx="640" cy="290" r="586" opacity="0.09"/>
@@ -52,10 +52,10 @@
     <rect width="1280" height="640" fill="url(#vignette)"/>
     <rect width="1280" height="640" fill="url(#sheen)"/>
 
-    <ellipse cx="378" cy="208" rx="72" ry="108" fill="#7C3AED" opacity="0.55" filter="url(#halo)"/>
+    <ellipse cx="378" cy="208" rx="72" ry="108" fill="#EC3D78" opacity="0.55" filter="url(#halo)"/>
 
     <svg x="319" y="110" width="118.3" height="196" viewBox="302 164 420 696" overflow="visible">
-      <g fill="none" stroke="#7C3AED" stroke-width="80" stroke-linecap="round" stroke-linejoin="round">
+      <g fill="none" stroke="#EC3D78" stroke-width="80" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="440" cy="302" r="98"/>
         <path d="M440 406V820"/>
         <path d="M682 401L415 610L682 820" clip-path="url(#arms)"/>
@@ -71,7 +71,7 @@
       <path d="M950 208V313A26 26 0 0 1 924 339H824"/>
     </g>
 
-    <g font-family="Segoe UI, sans-serif" font-size="26" font-weight="600" fill="#F4F1FB">
+    <g font-family="Segoe UI, sans-serif" font-size="26" font-weight="600" fill="#FBF1F4">
       <g opacity="0.96">
         <text x="658" y="408" text-anchor="end">+1000</text>
         <use href="#gs" x="668" y="387" width="24" height="24"/>
