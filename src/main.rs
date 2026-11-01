@@ -67,27 +67,16 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn app_icon() -> egui::IconData {
-    const SVG: &[u8] = include_bytes!("../docs/assets/logo.svg");
+    const PNG: &[u8] = include_bytes!("../docs/assets/logo.png");
     const SIZE: u32 = 256;
 
-    let tree = resvg::usvg::Tree::from_data(SVG, &resvg::usvg::Options::default())
-        .expect("logo.svg");
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(SIZE, SIZE).expect("app icon pixmap");
-    let scale = SIZE as f32 / tree.size().width();
-    resvg::render(
-        &tree,
-        resvg::tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-
-    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for pixel in pixmap.pixels() {
-        let color = pixel.demultiply();
-        rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
-    }
+    let image = image::load_from_memory(PNG).expect("logo.png");
+    let icon = image
+        .resize_exact(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
 
     egui::IconData {
-        rgba,
+        rgba: icon.into_raw(),
         width: SIZE,
         height: SIZE,
     }
