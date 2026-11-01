@@ -28,7 +28,7 @@ impl KilogApp {
         changed |= setting_row(
             ui,
             "Enable Unlock All",
-            Some("Do not use this"),
+            None,
             &mut self.config.enable_unlock_all,
         );
         ui.add_space(8.0);
