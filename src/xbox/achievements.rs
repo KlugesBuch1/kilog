@@ -251,6 +251,15 @@ impl TitleAchievements {
             (self.unlocked_count() as f32 / count as f32).clamp(0.0, 1.0)
         }
     }
+
+    pub fn locked_ids(&self, supported: Option<&HashSet<String>>) -> Vec<String> {
+        self.achievements
+            .iter()
+            .filter(|achievement| !achievement.is_unlocked())
+            .filter(|achievement| supported.is_none_or(|ids| ids.contains(achievement.id.as_str())))
+            .map(|achievement| achievement.id.clone())
+            .collect()
+    }
 }
 
 pub async fn fetch_title_achievements(
@@ -854,5 +863,53 @@ fn value_to_f64(value: &serde_json::Value) -> Option<f64> {
             .ok()
             .filter(|number| number.is_finite()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{Achievement, ProgressState, TitleAchievements};
+
+    fn achievement(id: &str, unlocked: bool) -> Achievement {
+        Achievement {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            description: String::new(),
+            locked_description: String::new(),
+            gamerscore: 0,
+            progress_state: if unlocked {
+                ProgressState::Unlocked
+            } else {
+                ProgressState::Locked
+            },
+            in_progress: false,
+            is_secret: false,
+            rarity: None,
+            unlocked_at: None,
+            icon_url: None,
+        }
+    }
+
+    fn board(achievements: Vec<Achievement>) -> TitleAchievements {
+        TitleAchievements {
+            title_name: None,
+            service_config_id: None,
+            achievements,
+        }
+    }
+
+    #[test]
+    fn locked_ids_skip_unlocked_and_unsupported() {
+        let board = board(vec![
+            achievement("1", false),
+            achievement("2", true),
+            achievement("3", false),
+            achievement("4", false),
+        ]);
+        assert_eq!(board.locked_ids(None), ["1", "3", "4"]);
+        let supported = HashSet::from(["1".to_owned(), "4".to_owned()]);
+        assert_eq!(board.locked_ids(Some(&supported)), ["1", "4"]);
     }
 }

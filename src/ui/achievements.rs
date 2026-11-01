@@ -16,6 +16,7 @@ const PARTIAL_NOTE: &str = "This game is only partially supported. Unlock is dis
 const CARD_H: f32 = 76.0;
 const CARD_GAP: f32 = 8.0;
 const MIN_CARD_W: f32 = 280.0;
+const UNLOCK_ALL_GAP: std::time::Duration = std::time::Duration::from_secs(1);
 
 struct GameLoad {
     title_id: u64,
@@ -27,6 +28,51 @@ struct GameLoad {
 enum BodyAction {
     Retry,
     Unlock(String),
+    UnlockAll,
+    StopUnlockAll,
+}
+
+enum UnlockAllNote {
+    Unlocked(String),
+    Failed { id: String, message: String },
+    Finished,
+}
+
+enum UnlockAllAction {
+    Start,
+    Stop,
+}
+
+struct UnlockAllJob {
+    ids: Vec<String>,
+    title_id: u64,
+    authorization: String,
+    events_token: String,
+    xuid: String,
+    service_config_id: Option<String>,
+}
+
+struct UnlockAllRun {
+    done: usize,
+    total: usize,
+    stop: tokio::sync::watch::Sender<bool>,
+    notes: tokio::sync::mpsc::UnboundedReceiver<UnlockAllNote>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[derive(Clone, Copy)]
+struct UnlockAllUi {
+    running: Option<(usize, usize)>,
+    ready: bool,
+    hint: Option<&'static str>,
+}
+
+struct BoardUi<'a> {
+    unlocking: Option<&'a str>,
+    unlock_error: Option<&'a str>,
+    event_block: Option<&'a str>,
+    supported_ids: Option<&'a HashSet<String>>,
+    unlock_all: Option<UnlockAllUi>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,6 +130,7 @@ pub(super) struct AchievementPage {
     supported_ids: Option<HashSet<String>>,
     unlock_rx: Option<tokio::sync::oneshot::Receiver<(String, ProgressStatus)>>,
     unlock_task: Option<tokio::task::JoinHandle<()>>,
+    unlock_all: Option<UnlockAllRun>,
     rx: Option<tokio::sync::oneshot::Receiver<(u64, GameLoad)>>,
     task: Option<tokio::task::JoinHandle<()>>,
     epoch: u64,
@@ -108,6 +155,7 @@ impl AchievementPage {
             supported_ids: None,
             unlock_rx: None,
             unlock_task: None,
+            unlock_all: None,
             rx: None,
             task: None,
             epoch: 0,
@@ -121,6 +169,13 @@ impl AchievementPage {
         self.epoch = epoch;
     }
 
+    fn stop_unlock_all(&mut self) {
+        if let Some(run) = self.unlock_all.take() {
+            let _ = run.stop.send(true);
+            run.task.abort();
+        }
+    }
+
     fn cancel(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
@@ -132,6 +187,7 @@ impl AchievementPage {
         }
         self.unlock_rx = None;
         self.unlocking = None;
+        self.stop_unlock_all();
         self.event_block = None;
         self.supported_ids = None;
         self.epoch = self.epoch.wrapping_add(1);
@@ -159,12 +215,15 @@ impl KilogApp {
             match action {
                 BodyAction::Retry => self.retry_achievements(ctx),
                 BodyAction::Unlock(id) => self.spawn_unlock(ctx, id),
+                BodyAction::UnlockAll => self.spawn_unlock_all(ctx),
+                BodyAction::StopUnlockAll => self.stop_unlock_all(),
             }
         }
     }
 
     pub(super) fn poll_achievements(&mut self) {
         self.poll_unlock();
+        self.poll_unlock_all();
         let loading = self.achievements_page.loading;
         let epoch = self.achievements_page.epoch;
         let ready = self
@@ -286,25 +345,51 @@ impl KilogApp {
         let unlock_error = self.achievements_page.unlock_error.clone();
         let event_block = self.achievements_page.event_block.clone();
         let supported_ids = self.achievements_page.supported_ids.clone();
+        let unlock_all_enabled = self.config.enable_unlock_all;
+        let unlock_all_running = self
+            .achievements_page
+            .unlock_all
+            .as_ref()
+            .map(|run| (run.done, run.total));
+        let auto_running = self.auto.running;
         let mut retry = false;
-        let mut unlock = None;
+        let mut action = None;
         let mut next_filter = filter;
         if let Some(board) = &self.achievements_page.board {
-            let (filter, clicked) = paint_board(
-                ui,
-                &title,
-                board,
-                filter,
-                &mut list_query,
-                unlocking.as_deref(),
-                unlock_error.as_deref(),
-                event_block.as_deref(),
-                supported_ids.as_ref(),
-            );
+            let unlock_all = unlock_all_enabled.then(|| {
+                let count = board.locked_ids(supported_ids.as_ref()).len();
+                UnlockAllUi {
+                    running: unlock_all_running,
+                    ready: count > 0
+                        && event_block.is_none()
+                        && unlocking.is_none()
+                        && !auto_running,
+                    hint: if event_block.is_some() {
+                        Some("This game's achievements cannot be unlocked yet.")
+                    } else if count == 0 {
+                        Some("Every achievement is already unlocked.")
+                    } else if auto_running {
+                        Some("Auto Unlock is running.")
+                    } else if unlocking.is_some() {
+                        Some("An unlock is already running.")
+                    } else {
+                        None
+                    },
+                }
+            });
+            let board_ui = BoardUi {
+                unlocking: unlocking.as_deref(),
+                unlock_error: unlock_error.as_deref(),
+                event_block: event_block.as_deref(),
+                supported_ids: supported_ids.as_ref(),
+                unlock_all,
+            };
+            let (filter, clicked) =
+                paint_board(ui, &title, board, filter, &mut list_query, &board_ui);
             next_filter = filter;
-            unlock = clicked;
+            action = clicked;
         } else {
-            game_header(ui, &title, None);
+            game_header(ui, &title, None, None);
             ui.add_space(12.0);
             if loading {
                 loading_row(ui, "Loading achievements…");
@@ -321,7 +406,7 @@ impl KilogApp {
         if retry {
             Some(BodyAction::Retry)
         } else {
-            unlock.map(BodyAction::Unlock)
+            action
         }
     }
 
@@ -410,6 +495,7 @@ impl KilogApp {
 
     fn spawn_unlock(&mut self, ctx: egui::Context, achievement_id: String) {
         if self.achievements_page.unlocking.is_some()
+            || self.achievements_page.unlock_all.is_some()
             || self.achievements_page.event_block.is_some()
         {
             return;
@@ -511,6 +597,118 @@ impl KilogApp {
                 self.achievements_page.unlock_error = Some(message);
             }
         }
+    }
+
+    fn spawn_unlock_all(&mut self, ctx: egui::Context) {
+        if self.achievements_page.unlock_all.is_some() || self.achievements_page.unlocking.is_some()
+        {
+            return;
+        }
+        let (ids, service_config_id) = {
+            let Some(board) = self.achievements_page.board.as_ref() else {
+                return;
+            };
+            let ids = board.locked_ids(self.achievements_page.supported_ids.as_ref());
+            if ids.is_empty() {
+                return;
+            }
+            (
+                ids,
+                board
+                    .service_config_id
+                    .clone()
+                    .filter(|id| !id.trim().is_empty()),
+            )
+        };
+        let Some(title_id) = self
+            .achievements_page
+            .selected
+            .as_ref()
+            .and_then(|title| title.title_id.as_deref())
+            .and_then(parse_title_id)
+        else {
+            self.achievements_page.unlock_error = Some("This title has no Title ID.".into());
+            return;
+        };
+        let Some(xuid) = self.signed_in_xuid() else {
+            self.achievements_page.unlock_error =
+                Some("Sign in on Home to unlock achievements.".into());
+            return;
+        };
+        let Some(xbox) = self.xbox.as_ref() else {
+            self.achievements_page.unlock_error = Some("Xbox authorization is not ready.".into());
+            return;
+        };
+        let total = ids.len();
+        let job = UnlockAllJob {
+            ids,
+            title_id,
+            authorization: xbox.authorization.clone(),
+            events_token: xbox.events_token.clone(),
+            xuid,
+            service_config_id,
+        };
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let (notes_tx, notes_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = self
+            .runtime
+            .spawn(run_unlock_all(job, stop_rx, notes_tx, ctx));
+        self.achievements_page.unlock_error = None;
+        self.achievements_page.unlock_all = Some(UnlockAllRun {
+            done: 0,
+            total,
+            stop: stop_tx,
+            notes: notes_rx,
+            task,
+        });
+    }
+
+    fn poll_unlock_all(&mut self) {
+        let mut notes = Vec::new();
+        if let Some(run) = self.achievements_page.unlock_all.as_mut() {
+            while let Ok(note) = run.notes.try_recv() {
+                notes.push(note);
+            }
+        }
+        for note in notes {
+            match note {
+                UnlockAllNote::Unlocked(id) => {
+                    if let Some(run) = self.achievements_page.unlock_all.as_mut() {
+                        run.done += 1;
+                    }
+                    self.mark_unlocked(&id);
+                }
+                UnlockAllNote::Failed { id, message } => {
+                    let name = self
+                        .achievements_page
+                        .board
+                        .as_ref()
+                        .and_then(|board| {
+                            board
+                                .achievements
+                                .iter()
+                                .find(|achievement| achievement.id == id)
+                        })
+                        .map(|achievement| achievement.name.clone())
+                        .unwrap_or(id);
+                    let stopped = self
+                        .achievements_page
+                        .unlock_all
+                        .as_ref()
+                        .map(|run| format!(" Stopped after {} of {}.", run.done, run.total))
+                        .unwrap_or_default();
+                    self.achievements_page.unlock_error =
+                        Some(format!("{name}: {message}{stopped}"));
+                }
+                UnlockAllNote::Finished => {
+                    self.achievements_page.unlock_all = None;
+                }
+            }
+        }
+    }
+
+    pub(super) fn stop_unlock_all(&mut self) {
+        self.achievements_page.stop_unlock_all();
     }
 
     pub(super) fn mark_unlocked(&mut self, id: &str) {
@@ -634,6 +832,72 @@ impl KilogApp {
     }
 }
 
+async fn run_unlock_all(
+    job: UnlockAllJob,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    notes: tokio::sync::mpsc::UnboundedSender<UnlockAllNote>,
+    ctx: egui::Context,
+) {
+    for (index, id) in job.ids.iter().enumerate() {
+        if index > 0 {
+            tokio::select! {
+                _ = tokio::time::sleep(UNLOCK_ALL_GAP) => {}
+                _ = stop.changed() => {}
+            }
+        }
+        if *stop.borrow() {
+            break;
+        }
+        let status = crate::xbox::achievements::unlock_achievement(
+            &job.authorization,
+            &job.events_token,
+            &job.xuid,
+            job.title_id,
+            job.service_config_id.as_deref(),
+            id,
+        )
+        .await;
+        let (note, failed) = match status {
+            Ok(ProgressStatus::Updated) => (UnlockAllNote::Unlocked(id.clone()), false),
+            Ok(ProgressStatus::Unauthorized) => (
+                UnlockAllNote::Failed {
+                    id: id.clone(),
+                    message: "Xbox authorization was rejected.".into(),
+                },
+                true,
+            ),
+            Ok(ProgressStatus::Forbidden) => (
+                UnlockAllNote::Failed {
+                    id: id.clone(),
+                    message: "Xbox refused this achievement update.".into(),
+                },
+                true,
+            ),
+            Ok(ProgressStatus::Rejected(message)) => (
+                UnlockAllNote::Failed {
+                    id: id.clone(),
+                    message,
+                },
+                true,
+            ),
+            Err(err) => (
+                UnlockAllNote::Failed {
+                    id: id.clone(),
+                    message: err.to_string(),
+                },
+                true,
+            ),
+        };
+        let _ = notes.send(note);
+        ctx.request_repaint();
+        if failed {
+            break;
+        }
+    }
+    let _ = notes.send(UnlockAllNote::Finished);
+    ctx.request_repaint();
+}
+
 fn title_from_lookup(
     title_id: u64,
     lookup: Result<TitleLookup, crate::error::Error>,
@@ -699,37 +963,49 @@ fn paint_board(
     board: &TitleAchievements,
     filter: AchievementFilter,
     list_query: &mut String,
-    unlocking: Option<&str>,
-    unlock_error: Option<&str>,
-    event_block: Option<&str>,
-    supported_ids: Option<&HashSet<String>>,
-) -> (AchievementFilter, Option<String>) {
-    game_header(ui, title, Some(board));
+    state: &BoardUi<'_>,
+) -> (AchievementFilter, Option<BodyAction>) {
+    let header_action = game_header(ui, title, Some(board), state.unlock_all.as_ref());
     ui.add_space(10.0);
     let filter = filter_row(ui, filter, list_query);
-    if supported_ids.is_some() {
+    if state.supported_ids.is_some() {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(PARTIAL_NOTE).size(13.0).color(WARN));
     }
-    if let Some(err) = event_block.or(unlock_error) {
+    if let Some(err) = state.event_block.or(state.unlock_error) {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(err).size(13.0).color(ERROR));
     }
     ui.add_space(8.0);
+    let bulk_running = state
+        .unlock_all
+        .is_some_and(|state| state.running.is_some());
     let unlock = achievement_list(
         ui,
         board,
         filter,
         list_query,
-        unlocking,
-        event_block.is_none(),
-        supported_ids,
+        state.unlocking,
+        state.event_block.is_none() && !bulk_running,
+        state.supported_ids,
     );
-    (filter, unlock)
+    let action = match (header_action, unlock) {
+        (Some(UnlockAllAction::Start), _) => Some(BodyAction::UnlockAll),
+        (Some(UnlockAllAction::Stop), _) => Some(BodyAction::StopUnlockAll),
+        (None, Some(id)) => Some(BodyAction::Unlock(id)),
+        (None, None) => None,
+    };
+    (filter, action)
 }
 
-fn game_header(ui: &mut egui::Ui, title: &Title, board: Option<&TitleAchievements>) {
+fn game_header(
+    ui: &mut egui::Ui,
+    title: &Title,
+    board: Option<&TitleAchievements>,
+    unlock_all: Option<&UnlockAllUi>,
+) -> Option<UnlockAllAction> {
     let width = ui.available_width();
+    let mut action = None;
     super::theme::card_frame().show(ui, |ui| {
         ui.set_width((width - 32.0).max(0.0));
         ui.horizontal_top(|ui| {
@@ -770,10 +1046,40 @@ fn game_header(ui: &mut egui::Ui, title: &Title, board: Option<&TitleAchievement
                     });
                     ui.add_space(8.0);
                     progress_bar(ui, board.progress_fraction());
+                    if let Some(unlock_all) = unlock_all {
+                        ui.add_space(10.0);
+                        action = unlock_all_row(ui, unlock_all);
+                    }
                 }
             });
         });
     });
+    action
+}
+
+fn unlock_all_row(ui: &mut egui::Ui, state: &UnlockAllUi) -> Option<UnlockAllAction> {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        if let Some((done, total)) = state.running {
+            ui.label(
+                egui::RichText::new(format!("Unlocking {done} of {total}…"))
+                    .size(13.0)
+                    .color(MUTED),
+            );
+            return action_button(ui, "Stop", true, 28.0)
+                .clicked()
+                .then_some(UnlockAllAction::Stop);
+        }
+        action_button(ui, "Unlock All", state.ready, 28.0)
+            .on_hover_text(
+                state
+                    .hint
+                    .unwrap_or("Unlocks every locked achievement for this game."),
+            )
+            .clicked()
+            .then_some(UnlockAllAction::Start)
+    })
+    .inner
 }
 
 fn cover(ui: &mut egui::Ui, title: &Title, size: f32) {
@@ -1235,14 +1541,25 @@ fn loading_row(ui: &mut egui::Ui, message: &str) {
 }
 
 fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response {
+    action_button(ui, label, true, height)
+}
+
+fn action_button(ui: &mut egui::Ui, label: &str, enabled: bool, height: f32) -> egui::Response {
+    let color = if enabled { TEXT } else { MUTED };
     let galley =
         ui.painter()
-            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), TEXT);
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), color);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(galley.size().x + 28.0, height),
-        egui::Sense::click(),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
     );
-    let fill = if response.hovered() {
+    let fill = if !enabled {
+        super::theme::BORDER
+    } else if response.hovered() {
         ACCENT.gamma_multiply(1.12)
     } else {
         ACCENT
@@ -1255,7 +1572,11 @@ fn accent_button(ui: &mut egui::Ui, label: &str, height: f32) -> egui::Response 
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
-        TEXT,
+        color,
     );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
 }

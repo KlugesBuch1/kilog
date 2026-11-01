@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub stop_on_spoof_fail: bool,
     pub use_randomized_delays: bool,
     pub anonymous_mode: bool,
+    pub enable_unlock_all: bool,
     pub randomize_delays: DelayRandomize,
 }
 
@@ -41,6 +42,7 @@ impl Default for AppConfig {
             stop_on_spoof_fail: false,
             use_randomized_delays: false,
             anonymous_mode: false,
+            enable_unlock_all: false,
             randomize_delays: DelayRandomize::default(),
         }
     }
@@ -200,6 +202,7 @@ mod tests {
         assert!(!config.stop_on_spoof_fail);
         assert!(!config.use_randomized_delays);
         assert!(!config.anonymous_mode);
+        assert!(!config.enable_unlock_all);
         assert!(!config.randomize_delays.over_1_min.enabled);
         assert!(!config.randomize_delays.over_5_hours.enabled);
         assert_eq!(

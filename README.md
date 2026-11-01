@@ -36,7 +36,7 @@ Unlocking achievements outside normal play can violate the Xbox terms of service
 | --- | --- |
 | Home | Sign in with Microsoft. A saved session signs you back in. Anonymous mode hides your gamertag, gamerpic, and XUID. |
 | Games | Browse the games on your account, search the list, and filter by completion. |
-| Achievements | Open a title, filter its achievements, and unlock them from their cards. |
+| Achievements | Open a title, filter its achievements, and unlock them from their cards or all at once. |
 | Stats Editor | Load a title by Title ID and edit its stats. |
 | Auto Unlock | Build a queue from a reference gamertag, set delays and skips, and unlock while that game is spoofed. The Xbox PC app has to be open and signed in, or spoofing fails. |
 | Spoofing | Spoof played time for a title. The Xbox PC app has to be open and signed in. |
@@ -62,6 +62,7 @@ Event templates are largely the work of [ethanwp28](https://github.com/ethanwp28
 | --- | --- |
 | Force region | When on, Xbox requests use `en-US`. When off, they use the Windows locale. |
 | Spoof games while on achievements page | Spoofs the opened game while on said page. |
+| Enable Unlock All | Shows **Unlock All** on the achievements page, which unlocks every locked achievement of the open game. |
 | Anonymous mode | Hides your gamertag, gamerpic, and XUID on Home. |
 | Randomize delays | Each tier can be turned on and sets its own range. Delays over 1 minute, 10 minutes, or 1 hour are shifted up or down by a random amount in that range. Delays over 5 hours are replaced by a random time inside the range. |
 

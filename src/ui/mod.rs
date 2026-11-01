@@ -396,6 +396,9 @@ impl KilogApp {
     }
 
     fn content(&mut self, ui: &mut egui::Ui) {
+        if self.page != Page::Achievements {
+            self.stop_unlock_all();
+        }
         ui.label(
             egui::RichText::new(self.page.title())
                 .size(28.0)
